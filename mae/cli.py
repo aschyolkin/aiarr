@@ -23,6 +23,9 @@ def main():
     db = Database(settings.state_dir)
     db.execute("SELECT id FROM jobs LIMIT 1")
     logging.basicConfig(level=logging.INFO, format="%(message)s")
+    # HTTP libraries log full URLs at INFO; source URLs may contain private passkeys.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
     if args.command == "api":
         from mae.api import create_app
 

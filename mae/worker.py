@@ -6,13 +6,13 @@ import shutil
 import time
 from pathlib import Path
 
-import httpx
 from guessit import guessit
 
 from mae.db import Database
 from mae.deepseek import DeepSeek
 from mae.domain import Outcome, ProviderError, Work
 from mae.downloads import Downloader, safe_relative, torrent_metadata
+from mae.importing import destination_for
 from mae.jellyfin import Jellyfin
 from mae.parsing import episode_keys, parse_candidate
 from mae.policies import evaluate
@@ -222,7 +222,8 @@ class Worker:
             source = Path(info["save_path"]) / relative
             if not source.is_relative_to(self.settings.store / "downloads"):
                 raise ValueError("DOWNLOAD_OUTSIDE_MANAGED_PATH")
-            data = verify(probe(source, self.settings.store), self.settings.policy)
+            expected = json.loads(job["candidate"])["parsed"] if job["candidate"] else None
+            data = verify(probe(source, self.settings.store), self.settings.policy, expected)
             keys = episode_keys(guessit(str(relative))) if work.kind == "series" else []
             if work.kind == "series" and (not keys or not set(keys).issubset(work.episodes)):
                 raise ValueError("FILE_EPISODE_MAPPING_UNVERIFIED")
@@ -230,16 +231,10 @@ class Worker:
         if not paths or (work.kind == "movie" and len(paths) != 1):
             raise ValueError("AMBIGUOUS_MEDIA_FILES")
         self.db.transition(job["id"], "IMPORTING")
-        title = re.sub(r"[^\w .-]", "_", work.title)[:100].strip(" .") or "Untitled"
-        identity = f"tmdb-{work.external_id}" if work.kind == "movie" else f"tvdb-{work.external_id}"
-        folder = (
-            self.settings.store / ("films" if work.kind == "movie" else "serials") / f"{title} {{{identity}}}"
-        )
         # All files have been probed before the first publication.
         for source, data, keys in paths:
             episode = "+".join(keys) if keys else None
-            name = f"{title} - {episode}" if episode else f"{title} ({work.year})"
-            destination = folder / (name + source.suffix.lower())
+            destination = destination_for(work, source, self.settings.store, episode)
             self.db.execute(
                 "INSERT OR IGNORE INTO imports(job_id,source,destination,episode,state,probe) "
                 "VALUES(:id,:source,:dest,:episode,'PREPARED',:probe)",
@@ -286,30 +281,6 @@ class Worker:
             )
         else:
             self.db.transition(job["id"], "AVAILABLE", reserved=0)
-
-    def jellyfin_visible(self, work):
-        key = self.settings.jellyfin_key.get_secret_value()
-        if not key:
-            raise ValueError("JELLYFIN_KEY_REQUIRED")
-        with httpx.Client(
-            base_url=self.settings.jellyfin_url,
-            headers={"X-Emby-Token": key},
-            timeout=20,
-            trust_env=False,
-            follow_redirects=False,
-        ) as client:
-            client.post("/Library/Refresh").raise_for_status()
-            namespace = "Tmdb" if work.kind == "movie" else "Tvdb"
-            response = client.get(
-                "/Items",
-                params={
-                    "Recursive": "true",
-                    "AnyProviderIdEquals": f"{namespace}.{work.external_id}",
-                    "IncludeItemTypes": "Movie" if work.kind == "movie" else "Series",
-                },
-            )
-            response.raise_for_status()
-            return bool(response.json().get("Items"))
 
 
 def provider_details_empty():

@@ -15,7 +15,7 @@ hardlink publication; Jellyfin external-ID and episode coverage checks.
 
 ## Verified offline
 
-`uv run pytest -q`: **59 passed**, no skipped tests, two dependency deprecation
+`uv run pytest -q`: **71 passed**, no skipped tests, two dependency deprecation
 warnings at this checkpoint. `uv run ruff check mae migrations tests` passes.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
@@ -23,6 +23,10 @@ identity/episode, studio matching, malformed/XXE XML, auth pages, rate limits,
 SSRF/redirect rejection, invalid LLM schema/quotes, real local ffprobe, hardlink
 collision/restart/EXDEV, foreign torrent ownership, and add-timeout no-replay
 with the SDK's actual enum namespace.
+Import fault injection now covers a crash after the hardlink exists but before
+journal commit: restarting completes one import without a second link/download.
+Probe regressions reject unsupported actual resolution and contradictions with
+the selected release's declared resolution/codec.
 
 Upstream subsets: Faucet 106 passed; RTN 142; GuessIt API 30; Slimarr scoring 24.
 Prowlarr v11 Rutor/Kinozal definitions validated with upstream `scripts/validate.py`.
@@ -42,6 +46,16 @@ that attempted run failed and is not included in the pass count.
   BigFANGroup 4 results; Kinozal 1; NNM-Club 3; Rutor 5; RuTracker 10. Counts are
   observations, not claims of complete/correct results or download permission.
 * Existing Seerr API read succeeded: six requests, four approved at observation.
+* Isolated Jellyfin **10.11.11** discovered the synthetic hardlinked file using
+  the shared engine naming function and exact provider ID. No external metadata
+  fetchers enabled for this fixture library. This is not an LG playback test.
+* Isolated Seerr **3.4.1** onboarded against that Jellyfin; both facade connection
+  tests passed. Actual Seerr movie request and selected season 2 created exactly
+  two engine jobs, with **13 requested episodes**, in dry-run, without torrents.
+  Two repeated reconciliation events retained exactly the same job IDs, no duplicates.
+  No Radarr/Sonarr services exist in the test network. Metadata requests use TMDB;
+  the TV request is metadata-only, not a download. This and the swarm/library
+  checks are separate integration legs, NOT one complete worker-driven E2E.
 * AlexFilm/Flarrow public catalog pages reachable through browsing; RHS fetch 403.
 
 Real swarm command (requires staging directory prepared with UID 3000 write access):
@@ -66,7 +80,7 @@ access methods are blocked. No DRM/account restriction bypass attempted.
 
 ## Outstanding implementation / acceptance (not hidden as access blockers)
 
-Full live Seerr onboarding/movie/selected-season flow, episode-monitor/tag contract,
+Full worker-driven Seerr-to-Jellyfin E2E, episode-monitor/tag contract,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
 catalog adapters, magnet metadata preflight, complete evidence/audio-track models
@@ -80,3 +94,4 @@ license-text bundling also remain production release work.
 
 Default dry-run retained. Production Seerr/Radarr/Sonarr/Jellyfin settings have
 not been switched. Test-generated media is confined to the staging test directory.
+The isolated service stack was shut down after testing; fixture media is retained.

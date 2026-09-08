@@ -49,7 +49,7 @@ def probe(path, root):
     return json.loads(result.stdout)
 
 
-def verify(data, policy):
+def verify(data, policy, expected=None):
     streams = data.get("streams", [])
     videos = [
         s
@@ -65,6 +65,15 @@ def verify(data, policy):
     # Cropped cinema content may have fewer vertical pixels. Do not invent resolution.
     if any(v.get("width", 0) > 4096 or v.get("height", 0) > 2160 for v in videos):
         raise ValueError("VIDEO_DIMENSIONS_UNSUPPORTED")
+    for video in videos:
+        width = video.get("width", 0)
+        resolution = 2160 if width >= 3840 else 1080 if width >= 1920 else None
+        if resolution not in policy.resolutions:
+            raise ValueError("VIDEO_RESOLUTION_BELOW_POLICY")
+        if expected and expected.get("screen_size") != f"{resolution}p":
+            raise ValueError("VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE")
+        if expected and codecs.get(expected.get("video_codec")) != video.get("codec_name"):
+            raise ValueError("VIDEO_CODEC_DIFFERS_FROM_RELEASE")
     if policy.russian_required and not any(
         a.get("tags", {}).get("language", "").lower() in {"rus", "ru"} for a in audio
     ):

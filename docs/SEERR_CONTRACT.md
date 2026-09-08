@@ -9,7 +9,7 @@ Access logging disabled to avoid query-key logging.
 
 | Seerr method | Endpoint | Engine behavior | Test / status |
 |---|---|---|---|
-| getSystemStatus | GET system/status | Actual engine version; no fake Radarr version | Implemented; live UI compatibility pending |
+| getSystemStatus | GET system/status | Actual engine version and facade urlBase; no fake Radarr version | Live Seerr connection test passed |
 | getProfiles | GET qualityProfile | Actual configured policy ID/version | `test_movie_and_selected_season` |
 | getRootFolders | GET rootfolder | Canonical path, actual disk free/total | Implemented; requires mounted path |
 | getTags | GET tag | Empty configured tag set | Implemented; tag creation not supported |
@@ -30,7 +30,14 @@ fields as authorization. Worker polls every 300 seconds and deduplicates externa
 identity. `hasFile` is true only after verification/import and Jellyfin visibility.
 Partial season counts use imported episode keys, not pack filename claims.
 
-Limitations: live Seerr onboarding, completion/cancellation propagation, generation-aware
+Live `tests/live_seerr.py`: Seerr 3.4.1 onboarding via Jellyfin 10.11.11, both
+connection tests, movie POST and selected-season POST passed; 2 dry-run jobs,
+13 episodes only in selected season 2. No Radarr/Sonarr in the test network.
+Setup requires Jellyfin `urlBase: ""`, `serverType: 2`; Sonarr settings require
+`enableSeasonFolders`. `MainSettings.apiKey` is read-only: fetch it through the
+authenticated API and pass it to the temporary engine process in memory.
+
+Limitations: completion/cancellation propagation, generation-aware
 re-request, episode monitoring and full metadata lookup contract are not accepted yet.
-Facade tests use a controlled Seerr double, **not** a running Seerr instance.
+Offline facade tests use a controlled double; the separate live test uses real Seerr.
 Production must not be switched based on these tests alone.

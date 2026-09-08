@@ -185,6 +185,7 @@ def create_app(settings=None, db=None, seerr=None):
                 "version": "0.1.0",
                 "appName": "Media Acquisition Engine",
                 "instanceName": "MAE",
+                "urlBase": "/radarr" if kind == "movie" else "/sonarr",
                 "isProduction": True,
                 "isLinux": True,
                 "authentication": "apiKey",

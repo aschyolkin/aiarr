@@ -56,3 +56,24 @@ if rolling back migrations. Never delete the media dataset.
 No Bazarr, subtitle fetching, torrent streaming, debrid or player added.
 Automatic subtitle display is a Jellyfin user/device preference and remains an
 explicit unperformed live configuration check.
+
+## Isolated real-service tests
+
+Prepare `e2e-data/seed` and `e2e-data/leecher` writable by UID 3000 on the staging
+host, build `media-acquisition-engine:0.1.0-test` from this Dockerfile, then:
+
+```
+docker compose -f compose.test.yaml --profile full up -d seed leecher jellyfin seerr
+docker compose -f compose.test.yaml run --rm test
+docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_jellyfin.py
+docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py
+docker compose -f compose.test.yaml --profile full down
+```
+
+Only test Seerr has Internet egress for metadata; no ports are published and no
+production paths are mounted. Seerr/Jellyfin configurations use disposable tmpfs.
+The Seerr test starts its own API subprocess, fetches the test Seerr key into
+memory, and never starts a worker. A rerun requires a fresh Seerr request store:
+`docker compose -f compose.test.yaml --profile full up -d --force-recreate seerr`.
+Wait for server startup before invoking tests. Fixture media remains in e2e-data
+after shutdown. These separate legs do not certify full end-to-end acquisition.
