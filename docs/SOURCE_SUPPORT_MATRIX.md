@@ -1,0 +1,27 @@
+# Source support matrix — 2026-09-08
+
+Protocol implementation is not live site certification. No source cookies or
+private fixtures have been imported. No random mirrors selected.
+
+| Source/address | Integration | Auth | Verified | Remaining limitation |
+|---|---|---|---|---|
+| RuTracker https://rutracker.org/ | Torznab + Jackett `RuTracker.cs`; optional separately configured card enricher | Account/captcha in gateway; card cookie separate | Upstream implementation audit, protocol fixtures | No account live search/download/card/file-list test |
+| Rutor http://rutor.info/ (upstream definition address; user must confirm reachable address) | Torznab + `rutor.yml` | Usually public | Definition located; protocol fixtures | Direct card and download live not tested |
+| Kinozal https://kinozal.tv/ | Torznab + `kinozal.yml` | Account | Login/settings implementation inspected | Disable `addrussian`; card auth/live download not tested |
+| NNM-Club https://nnmclub.to/ (definition; confirm operator address) | Torznab + `noname-club.yml` | Account where required | Definition located | Spoiler/parser fixtures and live access outstanding |
+| LostFilm https://lostfilm.tv/ | Torznab + `LostFilm.cs` | Account/captcha | Login implementation inspected | Live numbering/quality/download tests outstanding |
+| NewStudio https://newstudio.tv/ | Torznab + `newstudio.yml` | Definition public; IP restrictions | Search/download selectors inspected | Upstream warns IP filtering; live unavailable/unverified |
+| AlexFilm https://alexfilm.tv/ | `studio_matching_only` in engine | Site offers Google/Yandex login | Public home page reachable via web tool; catalog and studio channel links visible | Direct catalog adapter not implemented; no download interface verified |
+| Red Head Sound https://redheadsound.studio/ | `studio_matching_only` in engine | Undetermined | Public fetch returned 403 via web tool | Direct integration blocked for this access method; no bypass |
+| Flarrow Films https://fla-fi.studio/ | `studio_matching_only` in engine | Undetermined | Address linked by official Telegram channel; public catalog reachable via web tool | Older official posts mention torrents, so absence must NOT be asserted; current download/card integration not tested |
+
+All five studio names recognized only in audio-scoped evidence, with equal default
+weights. This does not prove the actual audio performance or direct studio download.
+Configurable HTML enrichment is infrastructure, not six complete tested site parsers.
+`fetch_file_list` explicitly returns `UNSUPPORTED_CAPABILITY` for Torznab.
+Magnet handles are parsed but automatic acquisition waits for metadata preflight,
+which is not implemented yet.
+
+Evidence links: [AlexFilm](https://alexfilm.tv/),
+[RHS](https://redheadsound.studio/), [Flarrow catalog](https://fla-fi.studio/),
+[official Flarrow channel](https://t.me/s/flarrowfilmsofficial).

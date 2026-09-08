@@ -1,0 +1,40 @@
+Media Acquisition Engine — third-party notices
+
+No modules from Faucet, Slimarr, AIOStreams, Seerr or Jackett are copied into
+the engine. Their implementations were inspected; upstream SHAs, concrete
+modules, test results and decisions are in docs/REUSE_PLAN.md.
+
+Unmodified dependencies include:
+
+GuessIt 4.4.0 — Rémi Alvergnat and contributors — LGPL-3.0-or-later.
+Source: https://github.com/guessit-io/guessit
+This is a separately installed Python package. Users may replace/modify the
+library in the environment; no proprietary static integration or restrictions
+on debugging a modified library are imposed. The original wheel contains
+license notices. Preserve its LICENSE and source availability when distributing.
+
+qbittorrent-api 2026.8.1 — Russell Martin — MIT.
+Source: https://github.com/rmartin16/qbittorrent-api
+Installed without source changes; original package notices remain intact.
+
+FastAPI — Sebastián Ramírez and contributors — MIT.
+Pydantic — Pydantic contributors — MIT.
+SQLAlchemy and Alembic — SQLAlchemy authors and contributors — MIT.
+Uvicorn, HTTPX, Starlette — Encode and contributors — BSD-3-Clause.
+Beautiful Soup — Leonard Richardson and contributors — MIT.
+defusedxml — Christian Heimes and contributors — PSF-2.0.
+bencodepy — see installed distribution license metadata/notices.
+
+Complete installed dependency/version/license metadata (including development
+dependencies) is in docs/DEPENDENCIES.json. uv.lock includes exact resolution,
+artifact URLs and integrity hashes. Runtime and dev dependencies are separated
+by pyproject.toml dependency-groups. Metadata is not a substitute for actual
+license texts: include each distribution's license files in redistributed images.
+
+Optional external services keep their own licenses:
+Jackett GPL-2.0; Prowlarr definitions have unresolved root license provenance;
+Seerr MIT; qBittorrent GPL; Jellyfin GPL. No indexer definitions are redistributed
+here. Container images include additional OS/FFmpeg dependencies and notices;
+an image-level SBOM must accompany a released production build.
+
+No license is asserted for the user's new engine code without their choice.
