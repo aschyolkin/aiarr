@@ -1,0 +1,70 @@
+from pathlib import Path
+from typing import Literal
+
+from pydantic import BaseModel, Field, SecretStr, model_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class ProviderConfig(BaseModel):
+    name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,39}$")
+    protocol: Literal["torznab", "json"] = "torznab"
+    url: str
+    api_key: SecretStr = SecretStr("")
+    # Explicit trust only for the configured gateway, never arbitrary source URLs.
+    trusted_gateway: bool = False
+    source_host: str | None = None
+    details_selector: str | None = None
+    cookie: SecretStr = SecretStr("")
+    encoding: str = "utf-8"
+    interval: float = Field(default=2, ge=0, le=300)
+
+
+class Policy(BaseModel):
+    version: str = "base-1"
+    russian_required: bool = True
+    max_bytes: int = Field(default=60 * 1024**3, gt=0)
+    resolutions: list[int] = [2160, 1080]
+    codecs: list[str] = ["H.265", "H.264"]
+    source_weights: dict[str, int] = {"Web": 40, "Blu-ray": 40}
+    studio_weights: dict[str, int] = {
+        "LostFilm": 0,
+        "NewStudio": 0,
+        "AlexFilm": 0,
+        "Red Head Sound": 0,
+        "Flarrow Films": 0,
+    }
+    upgrades: Literal[False] = False
+
+
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_prefix="MAE_", env_file=".env", extra="ignore")
+    api_key: SecretStr = Field(min_length=24)
+    state_dir: Path = Path("state")
+    store: Path = Path("/data/store")
+    dry_run: bool = True
+    providers: list[ProviderConfig] = []
+    policy: Policy = Policy()
+    qbit_url: str = "http://127.0.0.1:30024"
+    qbit_username: str = ""
+    qbit_password: SecretStr = SecretStr("")
+    jellyfin_url: str = "http://127.0.0.1:30013"
+    jellyfin_key: SecretStr = SecretStr("")
+    seerr_url: str = "http://127.0.0.1:30357"
+    seerr_key: SecretStr = SecretStr("")
+    tmdb_key: SecretStr = SecretStr("")
+    deepseek_key: SecretStr = SecretStr("")
+    deepseek_model: Literal["deepseek-v4-flash"] = "deepseek-v4-flash"
+    deepseek_daily_calls: int = Field(default=20, ge=0)
+    max_attempts: int = Field(default=5, ge=1, le=10)
+    enrichment_limit: int = Field(default=20, ge=1, le=100)
+    reserve_bytes: int = Field(default=5 * 1024**3, ge=0)
+    max_downloads: int = Field(default=2, ge=1, le=10)
+
+    @model_validator(mode="after")
+    def validate_names(self):
+        names = [p.name for p in self.providers]
+        if len(names) != len(set(names)):
+            raise ValueError("provider names must be unique")
+        if self.store != Path("/data/store"):
+            raise ValueError("media mount must be /data/store")
+        return self

@@ -1,0 +1,58 @@
+# Isolated test subnet: no ports published, no Internet route, no production mounts.
+name: mae-e2e
+services:
+  jellyfin:
+    image: jellyfin/jellyfin:10.11.11
+    profiles: [full]
+    user: "3000:3000"
+    volumes:
+      - ./e2e-data/leecher:/data/store:ro
+    tmpfs:
+      - /config:uid=3000,gid=3000,mode=0700
+      - /cache:uid=3000,gid=3000,mode=0700
+    networks: [isolated]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+    cpus: 2
+  seed:
+    image: ghcr.io/home-operations/qbittorrent@sha256:4fcf15b7f265c2c8d7bc2a7e13240a07e0593c326f3cf3b5b9bb69eec5b79299
+    user: "3000:3000"
+    entrypoint: [/bin/sh, /fixtures/start-qbit.sh]
+    volumes:
+      - ./tests:/fixtures:ro
+      - ./e2e-data/seed:/data/store
+    tmpfs: ["/config:uid=3000,gid=3000,mode=0700"]
+    networks: [isolated]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+  leecher:
+    image: ghcr.io/home-operations/qbittorrent@sha256:4fcf15b7f265c2c8d7bc2a7e13240a07e0593c326f3cf3b5b9bb69eec5b79299
+    user: "3000:3000"
+    entrypoint: [/bin/sh, /fixtures/start-qbit.sh]
+    volumes:
+      - ./tests:/fixtures:ro
+      - ./e2e-data/leecher:/data/store
+    tmpfs: ["/config:uid=3000,gid=3000,mode=0700"]
+    networks: [isolated]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+  test:
+    image: media-acquisition-engine:0.1.0-test
+    user: "3000:3000"
+    entrypoint: [python, /tests/live_qbit.py]
+    volumes:
+      - ./tests:/tests:ro
+      - ./e2e-data/leecher:/data/store
+      - ./e2e-data/seed:/seed
+    tmpfs: [/state, /tmp]
+    networks: [isolated]
+    depends_on: [seed, leecher]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
+networks:
+  isolated:
+    internal: true

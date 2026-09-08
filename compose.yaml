@@ -1,0 +1,48 @@
+name: media-acquisition-engine
+x-common: &common
+  image: media-acquisition-engine:0.1.0
+  build: .
+  user: "${MAE_UID:-3000}:${MAE_GID:-3000}"
+  env_file: .env
+  environment:
+    MAE_STATE_DIR: /state
+  volumes:
+    - ${MAE_STATE_HOST:?set persistent state directory}:/state
+    - /mnt/data/store:/data/store
+  read_only: true
+  tmpfs:
+    - /tmp:size=64m,mode=1777
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  cpus: 2
+  mem_limit: 1g
+  pids_limit: 128
+services:
+  migrate:
+    <<: *common
+    command: migrate
+    restart: "no"
+  api:
+    <<: *common
+    command: api
+    restart: unless-stopped
+    volumes:
+      - ${MAE_STATE_HOST:?set persistent state directory}:/state
+      - /mnt/data/store:/data/store:ro
+    ports:
+      - "127.0.0.1:30280:8080"
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: [CMD, python, -c, "import os,urllib.request; r=urllib.request.Request('http://127.0.0.1:8080/health',headers={'X-Api-Key':os.environ['MAE_API_KEY']}); urllib.request.urlopen(r,timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+  worker:
+    <<: *common
+    command: worker
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
