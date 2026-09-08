@@ -4,15 +4,16 @@ import json
 import os
 import socket
 import subprocess
+import sys
 import time
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import httpx
 
 
 @contextmanager
-def engine_process(seerr_url, seerr_key):
+def engine_process(seerr_url, seerr_key, overrides=None):
     env = dict(
         os.environ,
         MAE_API_KEY="isolated-engine-key-000000000000",
@@ -20,6 +21,7 @@ def engine_process(seerr_url, seerr_key):
         MAE_SEERR_KEY=seerr_key,
         MAE_DRY_RUN="true",
     )
+    env.update(overrides or {})
     subprocess.run(["/app/.venv/bin/mae", "migrate"], env=env, check=True)
     process = subprocess.Popen(["/app/.venv/bin/mae", "api"], env=env)
     try:
@@ -37,13 +39,13 @@ def engine_process(seerr_url, seerr_key):
             time.sleep(1)
         else:
             raise RuntimeError("Test engine startup timeout")
-        yield
+        yield env
     finally:
         process.terminate()
         process.wait(timeout=15)
 
 
-def main():
+def main(acquire_fixture=False):
     for suffix in ("films", "serials", "downloads/films", "downloads/serials"):
         (Path("/data/store") / suffix).mkdir(parents=True, exist_ok=True)
     seerr_url = f"http://{socket.gethostbyname('seerr')}:5055"
@@ -73,11 +75,26 @@ def main():
         login.raise_for_status()
         main_settings = seerr.get("/api/v1/settings/main")
         main_settings.raise_for_status()
-        with engine_process(seerr_url, main_settings.json()["apiKey"]):
-            exercise_requests(seerr, engine_host, engine_url)
+        with ExitStack() as stack:
+            fixture = None
+            if acquire_fixture:
+                from live_worker_e2e import acquisition_fixture
+
+                metadata = seerr.get("/api/v1/movie/10378")
+                metadata.raise_for_status()
+                assert metadata.json().get("originalTitle") == "Big Buck Bunny"
+                fixture = stack.enter_context(acquisition_fixture(metadata.json()["title"]))
+            env = stack.enter_context(
+                engine_process(
+                    seerr_url, main_settings.json()["apiKey"], fixture.overrides if fixture else None
+                )
+            )
+            jobs = exercise_requests(seerr, engine_host, engine_url, dry_run=not acquire_fixture)
+            if fixture:
+                fixture.finish(env, engine_url, jobs)
 
 
-def exercise_requests(seerr, engine_host, engine_url):
+def exercise_requests(seerr, engine_host, engine_url, dry_run=True):
     for kind, folder in (("radarr", "films"), ("sonarr", "serials")):
         config = {
             "name": "MAE isolated",
@@ -114,7 +131,7 @@ def exercise_requests(seerr, engine_host, engine_url):
     requests = seerr.get("/api/v1/request", params={"take": 100})
     requests.raise_for_status()
     assert not requests.json()["results"], "Use a fresh isolated Seerr container (tmpfs config)"
-    for kind, media_id, seasons in (("movie", 12690, None), ("tv", 1396, [2])):
+    for kind, media_id, seasons in (("movie", 10378, None), ("tv", 1396, [2])):
         existing = [
             r for r in requests.json()["results"] if r["type"] == kind and r["media"]["tmdbId"] == media_id
         ]
@@ -142,10 +159,11 @@ def exercise_requests(seerr, engine_host, engine_url):
                 works = [json.loads(j["work"]) for j in jobs]
                 movie = next(w for w in works if w["kind"] == "movie")
                 series = next(w for w in works if w["kind"] == "series")
-                assert movie["external_id"] == 12690
+                assert movie["external_id"] == 10378
+                assert "Big Buck Bunny" in [movie["title"], *movie["aliases"]]
                 assert series["seasons"] == [2] and series["episodes"]
                 assert all(ep.startswith("S02E") for ep in series["episodes"])
-                assert all(j["dry_run"] and not j["torrent_hash"] for j in jobs)
+                assert all(bool(j["dry_run"]) == dry_run and not j["torrent_hash"] for j in jobs)
                 original_ids = {j["id"] for j in jobs}
                 for _ in range(2):
                     engine.post("/events/seerr", json={}).raise_for_status()
@@ -157,17 +175,17 @@ def exercise_requests(seerr, engine_host, engine_url):
                     json.dumps(
                         {
                             "result": "PASS",
-                            "scope": "real Seerr movie and selected-season facade; no Radarr/Sonarr in test network",
+                            "scope": "real Seerr movie and selected-season facade; worker not started yet",
                             "jobs": len(jobs),
                             "episodes": len(series["episodes"]),
                         }
                     ),
                     flush=True,
                 )
-                return
+                return jobs
             time.sleep(2)
     raise AssertionError("Seerr did not deliver both requests to engine")
 
 
 if __name__ == "__main__":
-    main()
+    main(acquire_fixture="--acquire-fixture" in sys.argv)

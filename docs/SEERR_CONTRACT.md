@@ -33,6 +33,9 @@ Partial season counts use imported episode keys, not pack filename claims.
 Live `tests/live_seerr.py`: Seerr 3.4.1 onboarding via Jellyfin 10.11.11, both
 connection tests, movie POST and selected-season POST passed; 2 dry-run jobs,
 13 episodes only in selected season 2. No Radarr/Sonarr in the test network.
+The opt-in `--acquire-fixture` variant additionally completes a synthetic movie
+through the actual worker and checks facade `hasFile=true` after Jellyfin discovery.
+It does not certify Seerr's own periodic availability scan or series acquisition.
 Setup requires Jellyfin `urlBase: ""`, `serverType: 2`; Sonarr settings require
 `enableSeasonFolders`. `MainSettings.apiKey` is read-only: fetch it through the
 authenticated API and pass it to the temporary engine process in memory.

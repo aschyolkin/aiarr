@@ -141,7 +141,13 @@ class Worker:
                     if selected is None or rank > selected[0]:
                         selected = (rank, candidate, provider)
             except ProviderError as exc:
-                errors.append({"provider": provider.config.name, "outcome": exc.outcome.value})
+                errors.append(
+                    {
+                        "provider": provider.config.name,
+                        "outcome": exc.outcome.value,
+                        "retry_after": exc.retry_after,
+                    }
+                )
         decision = json.dumps(
             {"policy": self.settings.policy.model_dump(), "candidates": decisions, "errors": errors}
         )
@@ -149,11 +155,10 @@ class Worker:
         if not selected:
             state = "NEEDS_REVIEW" if any(c["unknown"] for c in decisions) else "WAITING_FOR_RELEASE"
             if errors and not decisions:
-                state = (
-                    "AUTH_REQUIRED"
-                    if any(e["outcome"] in {"AUTH_REQUIRED", "ACCESS_DENIED"} for e in errors)
-                    else "RETRY_SCHEDULED"
-                )
+                if not any(e["outcome"] in {"AUTH_REQUIRED", "ACCESS_DENIED"} for e in errors):
+                    self.retry(job, "PROVIDER_SEARCH_FAILED", max(e["retry_after"] for e in errors))
+                    return
+                state = "AUTH_REQUIRED"
             self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
             return
         _, candidate, provider = selected

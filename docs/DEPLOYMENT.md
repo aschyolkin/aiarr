@@ -77,3 +77,21 @@ memory, and never starts a worker. A rerun requires a fresh Seerr request store:
 `docker compose -f compose.test.yaml --profile full up -d --force-recreate seerr`.
 Wait for server startup before invoking tests. Fixture media remains in e2e-data
 after shutdown. These separate legs do not certify full end-to-end acquisition.
+
+For the worker-driven synthetic movie E2E, use a fresh staging media directory
+and fresh service configs. Run the qBittorrent and Jellyfin setup tests above,
+then replace the final `live_seerr.py` invocation with:
+
+```
+docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py --acquire-fixture
+```
+
+This opt-in turns dry-run off **only inside the temporary test API/worker** and
+serves a locally generated torrent through the real JSON adapter. No production
+source is configured. The harness SIGKILLs and restarts the worker after add,
+then waits up to 240 seconds for actual Jellyfin discovery. Test identity comes
+from [TMDB Big Buck Bunny](https://www.themoviedb.org/movie/10378-big-buck-bunny),
+but content is synthetic test patterns/silence, never represented as the real film.
+Do not reuse its fixture source against production services. The series request
+tests selection only; the fixture has no series release. Shut down the stack
+afterward; retain fixture media rather than overwriting hardlinked files on reruns.

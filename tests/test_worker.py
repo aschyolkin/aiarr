@@ -1,9 +1,11 @@
+import time
 from unittest.mock import Mock
 
 import httpx
 
 from mae.config import ProviderConfig
 from mae.db import Database
+from mae.domain import Outcome, ProviderError
 from mae.providers import TorznabProvider
 from mae.worker import Worker
 
@@ -34,3 +36,22 @@ def test_missing_torrent_does_not_repeat_add(settings, db, movie):
     Worker(settings, db, [], downloader).tick()
     assert not downloader.add.called
     assert db.job(job_id)["reason"] == "ADD_OUTCOME_UNCONFIRMED"
+
+
+def test_source_errors_have_bounded_retries_and_retry_after(settings, db, movie):
+    settings = settings.model_copy(update={"max_attempts": 2})
+    provider = Mock()
+    provider.config.name = "fixture"
+    provider.search.side_effect = ProviderError(Outcome.RATE_LIMITED, retry_after=7200)
+    downloader = Mock()
+    job_id = db.submit(movie)
+    before = time.time()
+    Worker(settings, db, [provider], downloader).tick()
+    job = db.job(job_id)
+    assert job["state"] == "RETRY_SCHEDULED" and job["attempts"] == 1
+    assert job["next_run"] >= before + 7200
+    db.execute("UPDATE jobs SET next_run=0 WHERE id=:id", id=job_id)
+    Worker(settings, db, [provider], downloader).tick()
+    assert db.job(job_id)["state"] == "FAILED"
+    assert db.job(job_id)["attempts"] == 2
+    downloader.add.assert_not_called()

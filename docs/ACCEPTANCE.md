@@ -15,7 +15,7 @@ hardlink publication; Jellyfin external-ID and episode coverage checks.
 
 ## Verified offline
 
-`uv run pytest -q`: **71 passed**, no skipped tests, two dependency deprecation
+`uv run pytest -q`: **72 passed**, no skipped tests, two dependency deprecation
 warnings at this checkpoint. `uv run ruff check mae migrations tests` passes.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
@@ -27,6 +27,10 @@ Import fault injection now covers a crash after the hardlink exists but before
 journal commit: restarting completes one import without a second link/download.
 Probe regressions reject unsupported actual resolution and contradictions with
 the selected release's declared resolution/codec.
+New-episode reopening clears stale torrent intent/candidate while retaining import
+history. All-provider temporary failures consume bounded attempts and respect
+Retry-After (including a two-hour rate-limit regression). This retry change is
+offline-tested; the live image below predates that isolated retry change.
 
 Upstream subsets: Faucet 106 passed; RTN 142; GuessIt API 30; Slimarr scoring 24.
 Prowlarr v11 Rutor/Kinozal definitions validated with upstream `scripts/validate.py`.
@@ -54,8 +58,22 @@ that attempted run failed and is not included in the pass count.
   two engine jobs, with **13 requested episodes**, in dry-run, without torrents.
   Two repeated reconciliation events retained exactly the same job IDs, no duplicates.
   No Radarr/Sonarr services exist in the test network. Metadata requests use TMDB;
-  the TV request is metadata-only, not a download. This and the swarm/library
-  checks are separate integration legs, NOT one complete worker-driven E2E.
+  the TV request is metadata-only, not a download.
+* **Worker-driven synthetic movie E2E passed** using `live_seerr.py --acquire-fixture`:
+  real Seerr request → real JSON protocol adapter/local fixture HTTP server →
+  durable worker → qBittorrent swarm → ffprobe → hardlink → exact-ID Jellyfin
+  discovery → AVAILABLE and facade hasFile=true. **2,647,201 bytes**, one import,
+  one matching torrent, link count 2. Worker was actually SIGKILLed after torrent
+  addition and restarted with the same SQLite state; no direct DB edits or manual
+  import calls used to advance this job. Repeated reconciliation kept job IDs.
+  Tested image digest: `sha256:496e47081e5c1fac6663af3646452614acc521f55eaefeb5031d2d6f0fe2ac1f`.
+  The requested identity is Big Buck Bunny, but bytes are explicitly synthetic
+  test patterns/silence with a rus stream tag, not the movie or Russian speech.
+  This proves mechanics, not content authenticity, tracker coverage, series E2E,
+  Seerr availability scanning, or LG playback.
+  First attempt failed safely with no download due to an incorrect test TMDB ID
+  (12690 was Appaloosa). Correct ID **10378** and a title assertion are now used;
+  earlier facade-only success remains valid as an Appaloosa request contract test.
 * AlexFilm/Flarrow public catalog pages reachable through browsing; RHS fetch 403.
 
 Real swarm command (requires staging directory prepared with UID 3000 write access):
@@ -80,7 +98,7 @@ access methods are blocked. No DRM/account restriction bypass attempted.
 
 ## Outstanding implementation / acceptance (not hidden as access blockers)
 
-Full worker-driven Seerr-to-Jellyfin E2E, episode-monitor/tag contract,
+Real-source movie E2E and series acquisition E2E, episode-monitor/tag contract,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
 catalog adapters, magnet metadata preflight, complete evidence/audio-track models

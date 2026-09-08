@@ -54,7 +54,11 @@ class Database:
                 )
                 if set(merged.episodes) - set(previous["episodes"]) and row["state"] == "AVAILABLE":
                     conn.execute(
-                        text("UPDATE jobs SET state='REQUESTED',next_run=0 WHERE id=:id"), {"id": row["id"]}
+                        text(
+                            "UPDATE jobs SET state='REQUESTED',next_run=0,torrent_hash=NULL,"
+                            "candidate=NULL,decision=NULL,reserved=0,attempts=0,reason=NULL WHERE id=:id"
+                        ),
+                        {"id": row["id"]},
                     )
             return row["id"]
 

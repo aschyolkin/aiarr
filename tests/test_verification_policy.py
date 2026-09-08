@@ -28,8 +28,11 @@ def test_probe_contradicts_release(width, expected, reason):
 def test_new_episode_reopens_completed_series(db):
     work = Work(kind="series", external_id=9, title="Example", seasons=[1], episodes=["S01E01"])
     job_id = db.submit(work)
-    db.transition(job_id, "AVAILABLE")
+    db.transition(job_id, "AVAILABLE", torrent_hash="a" * 40, candidate='{"old":true}', reserved=42)
     assert db.submit(work) == job_id
     assert db.job(job_id)["state"] == "AVAILABLE"
     assert db.submit(work.model_copy(update={"episodes": ["S01E01", "S01E02"]})) == job_id
     assert db.job(job_id)["state"] == "REQUESTED"
+    assert db.job(job_id)["torrent_hash"] is None
+    assert db.job(job_id)["candidate"] is None
+    assert db.job(job_id)["reserved"] == 0
