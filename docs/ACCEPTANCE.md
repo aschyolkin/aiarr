@@ -15,8 +15,14 @@ hardlink publication; Jellyfin external-ID and episode coverage checks.
 
 ## Verified offline
 
-`uv run pytest -q`: **107 passed**, no skipped tests, two dependency deprecation
+`uv run pytest -q`: **112 passed**, no skipped tests, two dependency deprecation
 warnings at this checkpoint. `uv run ruff check mae migrations tests` passes.
+
+Seerr request lifecycle (migration 0004) is verified offline: explicit terminal
+status cancels only in-flight acquisition; a missing API page does not cancel;
+repeat/new approval opens a new generation; an engine-admin cancellation is not
+reopened by the same request; parallel approved requests and available media are
+retained. A live Seerr cancellation/re-request test remains required.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
 identity/episode, studio matching, malformed/XXE XML, auth pages, rate limits,

@@ -22,15 +22,18 @@ class Seerr:
             response.raise_for_status()
             return response.json()
 
-    def approved(self):
+    def requests(self):
         rows = []
         for page in range(100):
             data = self.get("/request", take=100, skip=page * 100)
             batch = data["results"]
-            rows.extend(r for r in batch if r.get("status") == 2)
+            rows.extend(batch)
             if len(batch) < 100:
                 return rows
         raise RuntimeError("SEERR_PAGINATION_LIMIT")
+
+    def approved(self):
+        return [request for request in self.requests() if request.get("status") == 2]
 
     def work(self, request):
         media = request["media"]
@@ -56,10 +59,17 @@ class Seerr:
         )
 
     def reconcile(self, db, dry_run):
-        # Repeated webhook/facade/poll events converge on the same external identity.
+        # Repeated webhook/facade/poll events converge on the same request identity.
         # Missing requests do not imply cancellation: availability can remove approval.
         count = 0
-        for request in self.approved():
-            db.submit(self.work(request), dry_run)
-            count += 1
+        for request in self.requests():
+            request_id = request.get("id")
+            if request.get("status") == 2:
+                job_id = db.submit(self.work(request), dry_run)
+                db.observe_seerr_request(request_id, job_id, request["status"])
+                count += 1
+            elif type(request_id) is int:
+                rows = db.execute("SELECT job_id FROM seerr_requests WHERE request_id=:id", id=request_id)
+                if rows:
+                    db.observe_seerr_request(request_id, rows[0]["job_id"], request.get("status"))
         return count

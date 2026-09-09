@@ -24,16 +24,22 @@ Access logging disabled to avoid query-key logging.
 | getLanguageProfiles | GET languageprofile | Russian profile | Implemented |
 | getEpisodes/monitorEpisodes | GET episode / PUT episode/monitor | Persistent episode IDs; actual desired monitoring; recheck approval for monitored=true | Offline and real Seerr extension passed: seasons 2→3, 26 episodes |
 
-Webhook POST `/events/seerr` re-fetches approved requests; does not trust event
+Webhook POST `/events/seerr` re-fetches the request list; it does not trust event
 fields as authorization. Worker polls every 300 seconds and deduplicates external
-identity. `hasFile` is true only after verification/import and Jellyfin visibility.
+identity. Migration 0004 persists the request ID, status, active/suppressed state
+and a job generation. An explicit terminal status cancels only in-flight work when
+no other approved request remains; a missing API row never implies cancellation.
+A later real approval opens a fresh generation and clears only its torrent intent.
+An engine-admin cancellation suppresses current request IDs, so an unchanged,
+still-approved request cannot silently restart it. `hasFile` is true only after
+verification/import and Jellyfin visibility.
 Partial season counts use individually observed Jellyfin episode coverage.
 Episode IDs are persisted by migration 0002 and survive request merges/restarts.
 Several approved requests for different seasons of one series are combined.
 All desired episodes are monitored by definition; setting `monitored=true` is
 idempotent and requires current Seerr approval. Disabling individual episodes
-returns 422; cancelled requests return 409 until generation-aware re-request is
-implemented. These unsupported operations are not silently acknowledged.
+returns 422. Cancelled requests return 409 until Seerr re-approves or creates a
+new request. These unsupported operations are not silently acknowledged.
 
 Live `tests/live_seerr.py`: Seerr 3.4.1 onboarding via Jellyfin 10.11.11, both
 connection tests, movie POST and selected-season POST passed; 2 dry-run jobs,
@@ -48,7 +54,8 @@ Setup requires Jellyfin `urlBase: ""`, `serverType: 2`; Sonarr settings require
 `enableSeasonFolders`. `MainSettings.apiKey` is read-only: fetch it through the
 authenticated API and pass it to the temporary engine process in memory.
 
-Limitations: completion/cancellation propagation, generation-aware re-request,
-individual episode unmonitoring and full metadata lookup contract are not accepted yet.
+Limitations: individual episode unmonitoring and full metadata lookup contract are
+not accepted yet. Cancellation/re-request has offline coverage but still requires
+a live Seerr cancellation/re-request observation.
 Offline facade tests use a controlled double; the separate live test uses real Seerr.
 Production must not be switched based on these tests alone.

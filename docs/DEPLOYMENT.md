@@ -68,6 +68,9 @@ Schema 0003 adds `tags` and `job_tags`. It is forward-only like the earlier
 migrations. The API accepts only existing positive tag IDs when a Seerr add/update
 payload supplies `tags`; unknown IDs cause HTTP 422. Used tags cannot be deleted.
 
+Schema 0004 adds the durable Seerr-request journal and generation counter. It is
+also forward-only: stop the app and take the same SQLite backup before upgrading.
+
 ## Isolated real-service tests
 
 Prepare `e2e-data/seed` and `e2e-data/leecher` writable by UID 3000 on the staging

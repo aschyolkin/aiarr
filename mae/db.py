@@ -67,6 +67,92 @@ class Database:
                     )
             return row["id"]
 
+    def observe_seerr_request(self, request_id, job_id, status):
+        """Persist one Seerr request observation and safely re-open a new generation.
+
+        A request absent from a later API page is deliberately not an observation:
+        Seerr can hide old requests as availability changes. Only an explicit,
+        non-approved status can cancel active acquisition work.
+        """
+        if type(request_id) is not int or request_id < 1:
+            return False
+        now = time.time()
+        active = int(status == 2)  # MediaRequestStatus.APPROVED in Seerr.
+        with self.engine.begin() as conn:
+            job = conn.execute(text("SELECT * FROM jobs WHERE id=:id"), {"id": job_id}).mappings().one()
+            existing = conn.execute(
+                text("SELECT * FROM seerr_requests WHERE request_id=:id"), {"id": request_id}
+            ).mappings().first()
+            if existing is not None and existing["job_id"] != job_id:
+                raise ValueError("SEERR_REQUEST_ID_COLLISION")
+            # A new request, or a later real re-approval of an unsuppressed one,
+            # is an explicit re-request after cancellation.
+            re_open = active and job["state"] == "CANCELLED" and (
+                existing is None or not existing["suppressed"]
+            )
+            generation = job["generation"] + int(re_open)
+            suppressed = int(existing["suppressed"]) if existing is not None else 0
+            conn.execute(
+                text(
+                    "INSERT INTO seerr_requests(request_id,job_id,status,active,suppressed,generation,updated) "
+                    "VALUES(:request,:job,:status,:active,:suppressed,:generation,:updated) "
+                    "ON CONFLICT(request_id) DO UPDATE SET status=excluded.status,active=excluded.active,"
+                    "generation=excluded.generation,updated=excluded.updated"
+                ),
+                {
+                    "request": request_id, "job": job_id, "status": status, "active": active,
+                    "suppressed": suppressed, "generation": generation, "updated": now,
+                },
+            )
+            if re_open:
+                conn.execute(
+                    text(
+                        "UPDATE jobs SET state='REQUESTED',reason='SEERR_REREQUESTED',next_run=0,"
+                        "torrent_hash=NULL,candidate=NULL,decision=NULL,reserved=0,attempts=0,generation=:generation "
+                        "WHERE id=:id"
+                    ),
+                    {"id": job_id, "generation": generation},
+                )
+                conn.execute(
+                    text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'REQUESTED','SEERR_REREQUESTED',:now)"),
+                    {"id": job_id, "now": now},
+                )
+            self._cancel_if_no_active_seerr_request(conn, job_id, now)
+            return re_open
+
+    def cancel_from_admin(self, job_id):
+        now = time.time()
+        with self.engine.begin() as conn:
+            changed = conn.execute(
+                text("UPDATE jobs SET state='CANCELLED',reason='ADMIN_CANCELLED',next_run=:now WHERE id=:id AND state!='CANCELLED'"),
+                {"id": job_id, "now": now},
+            )
+            if not changed.rowcount:
+                return False
+            # An engine-side cancellation remains cancelled while the same Seerr
+            # request is approved. A new request ID is required to re-open it.
+            conn.execute(text("UPDATE seerr_requests SET suppressed=1,updated=:now WHERE job_id=:id AND active=1"), {"id": job_id, "now": now})
+            conn.execute(text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED','ADMIN_CANCELLED',:now)"), {"id": job_id, "now": now})
+            return True
+
+    def _cancel_if_no_active_seerr_request(self, conn, job_id, now):
+        active = conn.execute(
+            text("SELECT 1 FROM seerr_requests WHERE job_id=:id AND active=1 AND suppressed=0 LIMIT 1"),
+            {"id": job_id},
+        ).first()
+        if active:
+            return False
+        changed = conn.execute(
+            text(
+                "UPDATE jobs SET state='CANCELLED',reason='SEERR_REQUEST_NOT_ACTIVE',next_run=:now "
+                "WHERE id=:id AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED')"
+            ),
+            {"id": job_id, "now": now},
+        )
+        if changed.rowcount:
+            conn.execute(text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED','SEERR_REQUEST_NOT_ACTIVE',:now)"), {"id": job_id, "now": now})
+        return bool(changed.rowcount)
+
     def record_coverage(self, job_id, coverage):
         # A fresh successful Jellyfin response replaces earlier observations.
         with self.engine.begin() as conn:

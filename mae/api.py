@@ -93,7 +93,7 @@ def create_app(settings=None, db=None, seerr=None):
     @app.post("/admin/jobs/{job_id}/cancel")
     def cancel(job_id: int):
         db.job(job_id)
-        db.transition(job_id, "CANCELLED", "ADMIN_CANCELLED")
+        db.cancel_from_admin(job_id)
         return {"status": "CANCELLED", "torrent_retained": True}
 
     @app.post("/events/seerr")
@@ -110,6 +110,7 @@ def create_app(settings=None, db=None, seerr=None):
 
     def approved_work(kind, external_id):
         approved = []
+        source_requests = []
         for req in seerr.approved():
             req_kind = "movie" if req["type"] == "movie" else "series"
             if (
@@ -117,6 +118,7 @@ def create_app(settings=None, db=None, seerr=None):
                 and req["media"].get("tmdbId" if kind == "movie" else "tvdbId") == external_id
             ):
                 approved.append(seerr.work(req))
+                source_requests.append(req)
         if not approved:
             raise HTTPException(409, "No approved Seerr request for this work")
         return approved[-1].model_copy(
@@ -124,7 +126,7 @@ def create_app(settings=None, db=None, seerr=None):
                 "seasons": sorted({s for work in approved for s in work.seasons}),
                 "episodes": sorted({ep for work in approved for ep in work.episodes}),
             }
-        )
+        ), source_requests
 
     def render(work, job=None):
         imports = (
@@ -272,7 +274,7 @@ def create_app(settings=None, db=None, seerr=None):
             namespace = "tmdb:" if kind == "movie" else "tvdb:"
             if not term.startswith(namespace) or not term[len(namespace) :].isdigit():
                 raise HTTPException(422, "External ID lookup required")
-            work = approved_work(kind, int(term[len(namespace) :]))
+            work, _ = approved_work(kind, int(term[len(namespace) :]))
             existing = db.execute("SELECT * FROM jobs WHERE identity=:key", key=f"{kind}:{work.external_id}")
             return [render(work, existing[0] if existing else None)]
 
@@ -294,7 +296,7 @@ def create_app(settings=None, db=None, seerr=None):
         @app.post(prefix + "/" + endpoint)
         @app.put(prefix + "/" + endpoint)
         def add(payload: dict):
-            work = approved_work(kind, payload.get("tmdbId" if kind == "movie" else "tvdbId"))
+            work, source_requests = approved_work(kind, payload.get("tmdbId" if kind == "movie" else "tvdbId"))
             if payload.get("qualityProfileId") != 1:
                 raise HTTPException(422, "Unknown quality profile")
             expected_root = str(settings.store / ("films" if kind == "movie" else "serials"))
@@ -315,6 +317,9 @@ def create_app(settings=None, db=None, seerr=None):
                     }
                 )
             job_id = db.submit(work, settings.dry_run)
+            for request in source_requests:
+                if type(request.get("id")) is int:
+                    db.observe_seerr_request(request["id"], job_id, request.get("status"))
             if "tags" in payload:
                 try:
                     db.set_job_tags(job_id, payload["tags"])
@@ -422,7 +427,7 @@ def create_app(settings=None, db=None, seerr=None):
             if job["state"] == "CANCELLED":
                 raise HTTPException(409, "Cancelled request requires a new approved request")
             work = Work.model_validate_json(job["work"])
-            approved = approved_work("series", work.external_id)
+            approved, _ = approved_work("series", work.external_id)
             if not {r["episode"] for r in rows if r["job_id"] == job_id}.issubset(approved.episodes):
                 raise HTTPException(409, "Episode no longer approved")
         # Desired episodes are monitored by definition; setting true is idempotent.
