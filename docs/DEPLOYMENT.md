@@ -23,6 +23,8 @@ under the download directories during this check.
 An in-container UID 3000 probe created and removed two temporary files under
 `downloads/films` and `films`; equal `st_dev`/inode and `nlink=2` confirmed
 that this actual dataset boundary supports hardlinks.
+The App was subsequently stopped and started through the TrueNAS lifecycle;
+it returned to `RUNNING`/`healthy` with the NNM provider configuration intact.
 
 Radarr and Sonarr were deliberately left running and Seerr was not reconfigured,
 so no second automation owns a request or download. Use
