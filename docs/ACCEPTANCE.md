@@ -22,7 +22,9 @@ Seerr request lifecycle (migration 0004) is verified offline: explicit terminal
 status cancels only in-flight acquisition; a missing API page does not cancel;
 repeat/new approval opens a new generation; an engine-admin cancellation is not
 reopened by the same request; parallel approved requests and available media are
-retained. A live Seerr cancellation/re-request test remains required.
+retained. Live verification on the disposable Seerr 3.4.1/Jellyfin 10.11.11
+stack also passed: deleting the old approved request then creating a new one
+opened generation 2, with no production service or media path involved.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
 identity/episode, studio matching, malformed/XXE XML, auth pages, rate limits,

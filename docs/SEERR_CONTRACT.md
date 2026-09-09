@@ -58,7 +58,8 @@ authenticated API and pass it to the temporary engine process in memory.
 available to an administrator: delete an approved request, then create a new one.
 It verifies the engine's admin cancellation remains cancelled across the missing
 old request and the new Seerr request opens generation 2. It never targets a
-production Seerr instance.
+production Seerr instance. It passed live on the isolated Seerr 3.4.1/Jellyfin
+10.11.11 stack (generation 2 observed).
 
 Limitations: individual episode unmonitoring and full metadata lookup contract are
 not accepted yet. Cancellation/re-request has offline coverage but still requires
