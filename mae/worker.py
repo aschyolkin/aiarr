@@ -244,8 +244,11 @@ class Worker:
                     parsed_keys = episode_keys(guessit(name))
                     if not parsed_keys:
                         raise ValueError("TORRENT_EPISODE_MAPPING_UNVERIFIED")
-                    keys.update(parsed_keys)
-            if not keys or not keys.issubset(work.episodes):
+                    overlap = set(parsed_keys) & set(work.episodes)
+                    if overlap and not set(parsed_keys).issubset(work.episodes):
+                        raise ValueError("TORRENT_FILE_COVERS_UNMONITORED_EPISODE")
+                    keys.update(overlap)
+            if not keys:
                 raise ValueError("TORRENT_OVERLAPS_EXISTING_OR_UNREQUESTED_EPISODES")
         if size > self.settings.policy.max_bytes:
             raise ValueError("TORRENT_SIZE_EXCEEDS_POLICY")
@@ -291,8 +294,13 @@ class Worker:
             expected = json.loads(job["candidate"])["parsed"] if job["candidate"] else None
             data = verify(probe(source, self.settings.store), self.settings.policy, expected)
             keys = episode_keys(guessit(str(relative))) if work.kind == "series" else []
-            if work.kind == "series" and (not keys or not set(keys).issubset(work.episodes)):
-                raise ValueError("FILE_EPISODE_MAPPING_UNVERIFIED")
+            if work.kind == "series":
+                if not keys:
+                    raise ValueError("FILE_EPISODE_MAPPING_UNVERIFIED")
+                if not (set(keys) & set(work.episodes)):
+                    continue
+                if not set(keys).issubset(work.episodes):
+                    raise ValueError("FILE_COVERS_UNMONITORED_EPISODE")
             paths.append((source, data, keys))
         if not paths or (work.kind == "movie" and len(paths) != 1):
             raise ValueError("AMBIGUOUS_MEDIA_FILES")
