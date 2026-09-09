@@ -108,6 +108,21 @@ def test_unmonitored_separate_pack_file_is_not_imported(db, series_env):
     assert db.job(job_id)["state"] == "AVAILABLE"
 
 
+def test_combined_file_covering_unmonitored_episode_requires_review(db, series_env):
+    settings, downloader, work, _folder, _route = series_env
+    job_id = db.submit(work, False)
+    ignored = db.execute("SELECT id FROM episodes WHERE job_id=:id AND episode='S01E02'", id=job_id)[0]["id"]
+    db.set_episode_monitoring([ignored], False)
+    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
+    downloader.files.return_value = [{"name": "Example.S01E01-E02.1080p.WEB-DL.H264.mkv"}]
+
+    Worker(settings, db, [], downloader).tick()
+
+    assert db.job(job_id)["state"] == "NEEDS_REVIEW"
+    assert db.job(job_id)["reason"] == "FILE_COVERS_UNMONITORED_EPISODE"
+    assert not db.execute("SELECT * FROM imports")
+
+
 def test_every_episode_probed_before_publishing_pack(db, series_env):
     settings, downloader, work, folder, _ = series_env
     job_id = db.submit(work, False)
