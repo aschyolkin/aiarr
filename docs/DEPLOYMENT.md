@@ -13,8 +13,8 @@ single media dataset and has the required `downloads/films`,
 dataset `/mnt/data/apps/mae-state` (UID/GID 3000, mode `0700`).
 
 The `mae` TrueNAS Custom App is installed from local image
-`media-acquisition-engine:0.1.0`, with `MAE_DRY_RUN=true`, no providers and no
-Seerr/qBittorrent/Jellyfin credentials. Its API is bound only to
+`media-acquisition-engine:0.1.0`, with `MAE_DRY_RUN=true`, the anonymous
+`nnmclub` provider, and no Seerr/qBittorrent/Jellyfin credentials. Its API is bound only to
 `127.0.0.1:30280`; the API mounts media read-only. Internal authenticated
 health returned HTTP 200 and Docker reported `healthy`. No new files appeared
 under the download directories during this check.
@@ -25,8 +25,10 @@ that this actual dataset boundary supports hardlinks.
 Radarr and Sonarr were deliberately left running and Seerr was not reconfigured,
 so no second automation owns a request or download. Use
 `deploy/truenas-custom-app.compose.yaml.example` as the secret-free Custom App
-template. Do not add integration credentials or disable dry-run until a separate
-cutover step has been accepted.
+template. It intentionally starts with no providers; Rutor remains disabled in
+the deployed App pending a tested Docker-network source route. Do not add
+integration credentials or disable dry-run until a separate cutover step has
+been accepted.
 
 Local development:
 
