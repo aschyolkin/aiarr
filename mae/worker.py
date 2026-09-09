@@ -232,6 +232,9 @@ class Worker:
         else:
             raw = provider.http.get(url, max_bytes=2_000_000)
             torrent_hash, size, files = torrent_metadata(raw)
+        # qBittorrent metadata is still untrusted provider input. Validate every
+        # path before a metadata-preflighted magnet can be resumed.
+        files = [str(safe_relative(file)) for file in files]
         if work.kind == "series":
             keys = set()
             for name in files:
