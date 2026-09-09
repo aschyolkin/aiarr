@@ -10,9 +10,11 @@ TrueNAS 25.10.7 was inventoried before deployment. `/mnt/data/store` is the
 single media dataset and has the required `downloads/films`,
 `downloads/serials`, `films`, and `serials` paths. A pre-change snapshot
 `data/apps@pre-mae-20260909` was created, followed by the dedicated state
-dataset `/mnt/data/apps/mae-state` (UID/GID 3000, mode `0700`).
+dataset `/mnt/data/apps/aiarr-state` (UID/GID 3000, mode `0700`). The original
+`mae-state` was snapshotted again before the rename and is retained only for
+rollback.
 
-The `mae` TrueNAS Custom App is installed from local image
+The `aiarr` TrueNAS Custom App is installed from local image
 `media-acquisition-engine:0.1.0`, with `MAE_DRY_RUN=true`, the anonymous
 `nnmclub` provider, and no Seerr/qBittorrent/Jellyfin credentials. Its API is bound only to
 `127.0.0.1:30280`; the API mounts media read-only. Internal authenticated
