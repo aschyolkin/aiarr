@@ -20,8 +20,11 @@ weights. This does not prove the actual audio performance or direct studio downl
 Configurable HTML enrichment is infrastructure, not six complete tested site parsers.
 `fetch_file_list` explicitly returns `UNSUPPORTED_CAPABILITY` for Torznab except the
 concrete Rutor card adapter, whose flat-file layout is checked before returning paths.
-Magnet handles are parsed but automatic acquisition waits for metadata preflight,
-which is not implemented yet.
+Magnet handles use a qBittorrent metadata-only preflight: only v1 `btih` magnets
+are accepted, the client stops at `MetadataReceived`, and the engine validates the
+reported size and file paths before it resumes the owned torrent. Missing metadata
+within the bounded wait becomes `MAGNET_METADATA_UNAVAILABLE`/review; v2 or hybrid
+magnets are explicitly unsupported. Live source magnet testing remains outstanding.
 
 Evidence links: [AlexFilm](https://alexfilm.tv/),
 [RHS](https://redheadsound.studio/), [Flarrow catalog](https://fla-fi.studio/),

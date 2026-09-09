@@ -227,9 +227,11 @@ class Worker:
         handle = provider.resolve_download(candidate.release)
         url = handle.url.get_secret_value()
         if url.startswith("magnet:"):
-            raise ValueError("MAGNET_METADATA_PREFLIGHT_NOT_IMPLEMENTED")
-        raw = provider.http.get(url, max_bytes=2_000_000)
-        torrent_hash, size, files = torrent_metadata(raw)
+            torrent_hash, size, files = self.downloader.magnet_preflight(url, work.kind)
+            raw = None
+        else:
+            raw = provider.http.get(url, max_bytes=2_000_000)
+            torrent_hash, size, files = torrent_metadata(raw)
         if work.kind == "series":
             keys = set()
             for name in files:
@@ -254,7 +256,10 @@ class Worker:
         # Persist intent before network action. On ambiguous add timeout, monitor hash
         # on restart; never add again blindly or issue a second candidate.
         self.db.transition(job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size)
-        self.downloader.add(raw, torrent_hash, work.kind)
+        if raw is None:
+            self.downloader.resume(torrent_hash)
+        else:
+            self.downloader.add(raw, torrent_hash, work.kind)
 
     def monitor(self, job, work):
         info = self.downloader.info(job["torrent_hash"])

@@ -1,5 +1,8 @@
+import base64
 import hashlib
+import time
 from pathlib import PurePosixPath
+from urllib.parse import parse_qs, urlsplit
 
 import bencodepy
 import qbittorrentapi
@@ -45,6 +48,28 @@ def torrent_metadata(raw):
         return hashlib.sha1(bencodepy.encode(info)).hexdigest(), total, names
     except (KeyError, TypeError, UnicodeError, bencodepy.DecodingError):
         raise ValueError("INVALID_TORRENT") from None
+
+
+def magnet_infohash(url):
+    """Return canonical v1 infohash; v2/hybrid magnets need explicit support."""
+    parsed = urlsplit(url)
+    if parsed.scheme.lower() != "magnet":
+        raise ValueError("INVALID_MAGNET")
+    values = parse_qs(parsed.query, keep_blank_values=True).get("xt", [])
+    matches = [value[9:] for value in values if value.lower().startswith("urn:btih:")]
+    if len(matches) != 1:
+        raise ValueError("INVALID_MAGNET")
+    value = matches[0]
+    if len(value) == 40 and all(ch in "0123456789abcdefABCDEF" for ch in value):
+        return value.lower()
+    if len(value) == 32:
+        try:
+            decoded = base64.b32decode(value.upper())
+        except ValueError:
+            raise ValueError("INVALID_MAGNET") from None
+        if len(decoded) == 20:
+            return decoded.hex()
+    raise ValueError("UNSUPPORTED_MAGNET_VERSION")
 
 
 class NoReplayClient(qbittorrentapi.Client):
@@ -104,6 +129,39 @@ class Downloader:
         # Reconcile actual client state rather than assuming one response string.
         if result != "Ok." and not self.info(torrent_hash):
             raise ProviderError(Outcome.TEMPORARY_FAILURE)
+
+    def magnet_preflight(self, url, kind, timeout=30):
+        """Obtain magnet metadata without allowing payload download to start."""
+        torrent_hash = magnet_infohash(url)
+        info = self.info(torrent_hash)
+        if info is None:
+            categories = self.client.torrents_categories()
+            if self.category not in categories:
+                self.client.torrents_create_category(name=self.category)
+            folder = "films" if kind == "movie" else "serials"
+            self.client.torrents_add(
+                urls=url,
+                category=self.category,
+                save_path=f"/data/store/downloads/{folder}",
+                tags="media-acquisition-engine,mae-preflight",
+                use_auto_torrent_management=False,
+                stop_condition="MetadataReceived",
+            )
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            info = self.info(torrent_hash)
+            if info:
+                files = self.files(torrent_hash)
+                if files:
+                    size = info.get("size") or info.get("total_size")
+                    if isinstance(size, int) and size >= 0:
+                        return torrent_hash, size, [row["name"] for row in files]
+            time.sleep(0.5)
+        raise ValueError("MAGNET_METADATA_UNAVAILABLE")
+
+    def resume(self, torrent_hash):
+        self.info(torrent_hash)  # ownership check before modifying state
+        self.client.torrents_resume(torrent_hashes=torrent_hash)
 
     def files(self, torrent_hash):
         self.info(torrent_hash)  # ownership check before accessing paths

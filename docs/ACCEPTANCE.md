@@ -155,7 +155,7 @@ Real-source movie E2E and series acquisition E2E,
 individual episode unmonitoring,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
-catalog adapters, magnet metadata preflight, complete evidence/audio-track models
+catalog adapters, live source magnet coverage, complete evidence/audio-track models
 and field-specific conflict resolution, manual evidence review UI, full device and
 download profiles, original-language preference, more precise disk reservations,
 bounded alternatives/blocklists, complete import crash/concurrency fault matrix,

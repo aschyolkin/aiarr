@@ -6,7 +6,7 @@ import bencodepy
 import pytest
 
 from mae.config import Policy
-from mae.downloads import safe_relative, torrent_metadata
+from mae.downloads import magnet_infohash, safe_relative, torrent_metadata
 from mae.verification import probe, publish_hardlink, verify
 
 
@@ -24,6 +24,16 @@ def test_torrent_parse():
     )
     h, size, names = torrent_metadata(raw)
     assert len(h) == 40 and size == 3 and names == ["movie.mkv"]
+
+
+def test_magnet_v1_infohash_validation():
+    assert magnet_infohash("magnet:?xt=urn:btih:0123456789abcdef0123456789abcdef01234567") == (
+        "0123456789abcdef0123456789abcdef01234567"
+    )
+    with pytest.raises(ValueError, match="INVALID_MAGNET"):
+        magnet_infohash("magnet:?dn=untrusted")
+    with pytest.raises(ValueError, match="UNSUPPORTED_MAGNET_VERSION"):
+        magnet_infohash("magnet:?xt=urn:btih:abc")
 
 
 def test_hardlink_restart_and_collision(tmp_path):
