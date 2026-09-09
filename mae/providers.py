@@ -2,7 +2,7 @@ import hashlib
 import json
 import re
 import time
-from urllib.parse import urljoin
+from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup
 from defusedxml import ElementTree
@@ -197,13 +197,17 @@ class NNMClubProvider:
             details_url = urljoin(self.config.url, "/forum/" + link["href"])
             rid = hashlib.sha256(details_url.encode()).hexdigest()
             self.handles[rid] = DownloadHandle(url=urljoin(self.config.url, "/forum/" + download["href"]))
-            results.append(SearchResult(provider=self.config.name, release_id=rid, title=title, details_url=details_url))
+            results.append(
+                SearchResult(provider=self.config.name, release_id=rid, title=title, details_url=details_url)
+            )
         if not results and soup.select_one("#search_form") is None:
             raise ProviderError(Outcome.PARSER_BROKEN)
         return results
 
     def fetch_details(self, release):
-        if not release.details_url or not release.details_url.startswith("https://nnmclub.to/forum/viewtopic.php?"):
+        if not release.details_url or not release.details_url.startswith(
+            "https://nnmclub.to/forum/viewtopic.php?"
+        ):
             raise ProviderError(Outcome.ACCESS_DENIED)
         raw = self._get(release.details_url)
         try:
@@ -241,7 +245,7 @@ class RutorProvider(NNMClubProvider):
         return {"search", "details", "file_list", "download"}
 
     def search(self, query):
-        raw = self._get(f"/search/0/0/000/0/{query.title}")
+        raw = self._get(f"/search/0/0/000/0/{quote(query.title, safe='')}")
         try:
             soup = BeautifulSoup(raw.decode("utf-8", errors="strict"), "html.parser")
         except UnicodeError:
@@ -263,7 +267,11 @@ class RutorProvider(NNMClubProvider):
             multipliers = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
             size = int(float(match[1]) * multipliers[match[2].upper()]) if match else None
             self.handles[rid] = DownloadHandle(url=magnet["href"])
-            rows.append(SearchResult(provider=self.config.name, release_id=rid, title=title, size=size, details_url=url))
+            rows.append(
+                SearchResult(
+                    provider=self.config.name, release_id=rid, title=title, size=size, details_url=url
+                )
+            )
         if not rows and soup.select_one("#index") is None:
             raise ProviderError(Outcome.PARSER_BROKEN)
         return rows
@@ -276,4 +284,9 @@ class RutorProvider(NNMClubProvider):
 
 
 def make_provider(config):
-    return {"torznab": TorznabProvider, "json": JSONProvider, "nnmclub": NNMClubProvider, "rutor": RutorProvider}[config.protocol](config)
+    return {
+        "torznab": TorznabProvider,
+        "json": JSONProvider,
+        "nnmclub": NNMClubProvider,
+        "rutor": RutorProvider,
+    }[config.protocol](config)
