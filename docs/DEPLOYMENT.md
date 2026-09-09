@@ -24,8 +24,7 @@ Seerr container reached the API and received the expected unauthenticated HTTP
 files appeared under the download directories during this check.
 The worker is configured with the NAS LAN URLs for Seerr (`30357`),
 qBittorrent (`30024`), and Jellyfin (`30013`). Each returned HTTP 200 from the
-worker namespace through its public status endpoint. Credentials are not yet
-configured, so no authenticated call or request submission was made.
+worker namespace through its public status endpoint.
 An in-container UID 3000 probe created and removed two temporary files under
 `downloads/films` and `films`; equal `st_dev`/inode and `nlink=2` confirmed
 that this actual dataset boundary supports hardlinks.
@@ -39,6 +38,25 @@ template. It intentionally starts with no providers; Rutor remains disabled in
 the deployed App pending a tested Docker-network source route. Do not add
 integration credentials or disable dry-run until a separate cutover step has
 been accepted.
+
+## Recorded service-credential and Seerr dry-run check — 2026-09-09
+
+A point-in-time snapshot `data/ix-apps@pre-aiarr-service-keys-20260909` was
+created before the Custom App update. Existing Seerr and Jellyfin service keys
+were read locally from their persistent application configuration and inserted
+only into aiarr's Custom App environment; no key was copied into this repository
+or emitted to logs. qBittorrent's already enabled blank-auth service route was
+verified through the installed Python client. From the aiarr worker, authenticated
+read-only Seerr request listing, Jellyfin system-info, and qBittorrent version
+calls all returned successfully.
+
+An authenticated POST to aiarr's `/events/seerr` performed a real reconciliation
+of the current Seerr data: three approved request records converged into two
+durable aiarr jobs. Both jobs retained `dry_run=true`; no torrent hash was
+created. This proves Seerr-to-aiarr request ingestion without reconfiguring
+Seerr's Radarr/Sonarr services, adding a download, importing media, or changing
+legacy automation ownership. The next cutover step remains an explicit Seerr
+facade configuration and a carefully scoped request-routing decision.
 
 Local development:
 
