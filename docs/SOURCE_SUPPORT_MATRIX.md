@@ -11,9 +11,9 @@ private fixtures have been imported. No random mirrors selected.
 | NNM-Club https://nnmclub.to/ | Concrete anonymous `nnmclub` search/card/download-handle adapter; Torznab remains optional | Anonymous search/card where site permits | 2026-09-09: live search `Big Buck Bunny` returned 5 results; Windows-1251 parser fixture passes | Card request returned `TEMPORARY_FAILURE` twice from this network; no `download.php` request was made. Live card/download still outstanding |
 | LostFilm https://lostfilm.tv/ | Torznab + `LostFilm.cs` | Account/captcha | Login implementation inspected | Live numbering/quality/download tests outstanding |
 | NewStudio https://newstudio.tv/ | Torznab + `newstudio.yml` | Definition public; IP restrictions | Search/download selectors inspected | Upstream warns IP filtering; live unavailable/unverified |
-| AlexFilm https://alexfilm.tv/ | `studio_matching_only` in engine | Site offers Google/Yandex login | Public home page reachable via web tool; catalog and studio channel links visible | Direct catalog adapter not implemented; no download interface verified |
+| AlexFilm https://alexfilm.tv/ | `studio_matching_only` + read-only `AlexFilmCatalog` | Site offers Google/Yandex login | Public catalog fetched 2026-09-09; catalog fixture parser passes | No download interface verified; catalog is never a download provider |
 | Red Head Sound https://redheadsound.studio/ | `studio_matching_only` in engine | Undetermined | Public fetch returned 403 via web tool | Direct integration blocked for this access method; no bypass |
-| Flarrow Films https://fla-fi.studio/ | `studio_matching_only` in engine | Undetermined | Address linked by official Telegram channel; public catalog reachable via web tool | Older official posts mention torrents, so absence must NOT be asserted; current download/card integration not tested |
+| Flarrow Films https://fla-fi.studio/ | `studio_matching_only` + read-only `FlarrowCatalog` | Login form present | Public catalog fetched 2026-09-09; catalog fixture parser passes | Older official posts mention torrents, so absence must NOT be asserted; current download/card integration not tested; catalog is never a download provider |
 
 All five studio names recognized only in audio-scoped evidence, with equal default
 weights. This does not prove the actual audio performance or direct studio download.
