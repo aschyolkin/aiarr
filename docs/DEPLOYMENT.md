@@ -22,6 +22,10 @@ health returned HTTP 200 and Docker reported `healthy`. A request from the
 Seerr container reached the API and received the expected unauthenticated HTTP
 401, proving the container-to-NAS route without exposing an API key. No new
 files appeared under the download directories during this check.
+The worker is configured with the NAS LAN URLs for Seerr (`30357`),
+qBittorrent (`30024`), and Jellyfin (`30013`). Each returned HTTP 200 from the
+worker namespace through its public status endpoint. Credentials are not yet
+configured, so no authenticated call or request submission was made.
 An in-container UID 3000 probe created and removed two temporary files under
 `downloads/films` and `films`; equal `st_dev`/inode and `nlink=2` confirmed
 that this actual dataset boundary supports hardlinks.
