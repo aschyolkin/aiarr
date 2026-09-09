@@ -52,8 +52,11 @@ def main(acquire_fixture=False, extend_season=False, lifecycle=False):
     for suffix in ("films", "serials", "downloads/films", "downloads/serials"):
         (Path("/data/store") / suffix).mkdir(parents=True, exist_ok=True)
     seerr_url = f"http://{socket.gethostbyname('seerr')}:5055"
+    jellyfin_url = f"http://{socket.gethostbyname('jellyfin')}:8096"
     engine_host = socket.gethostbyname(socket.gethostname())
     engine_url = f"http://{engine_host}:8080"
+    with httpx.Client(base_url=jellyfin_url, timeout=60, trust_env=False) as jellyfin:
+        wait_http_ready(jellyfin, "/System/Info/Public").raise_for_status()
     with httpx.Client(base_url=seerr_url, timeout=60, trust_env=False) as seerr:
         status = wait_http_ready(seerr, "/api/v1/status")
         status.raise_for_status()
