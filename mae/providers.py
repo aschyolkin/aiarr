@@ -262,7 +262,13 @@ class RutorProvider(NNMClubProvider):
                 continue
             url = urljoin(self.config.url, detail["href"])
             rid = hashlib.sha256(url.encode()).hexdigest()
-            size_text = cells[-2].get_text(" ", strip=True).replace(" ", "")
+            size_text = (
+                cells[-2]
+                .get_text(" ", strip=True)
+                .replace(" ", "")
+                .replace(",", ".")
+                .translate(str.maketrans({"К": "K", "М": "M", "Г": "G", "Т": "T", "Б": "B"}))
+            )
             match = re.fullmatch(r"([0-9.]+)(KB|MB|GB|TB)", size_text, re.I)
             multipliers = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
             size = int(float(match[1]) * multipliers[match[2].upper()]) if match else None
