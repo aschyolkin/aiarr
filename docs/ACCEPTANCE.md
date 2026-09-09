@@ -29,7 +29,9 @@ opened generation 2, with no production service or media path involved.
 Cancellation policy (migration 0005) is verified offline: an in-progress owned
 torrent is paused exactly once on the next worker tick while retained for review;
 a qBittorrent failure leaves it pending for retry. A live qBittorrent pause check
-remains part of the next isolated download lifecycle run.
+passed on isolated qBittorrent v5.2.3: a synthetic owned torrent was downloaded,
+paused, probed and hardlinked. No external tracker or production download path was
+used.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
 identity/episode, studio matching, malformed/XXE XML, auth pages, rate limits,
