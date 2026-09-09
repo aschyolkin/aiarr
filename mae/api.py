@@ -92,9 +92,9 @@ def create_app(settings=None, db=None, seerr=None):
 
     @app.post("/admin/jobs/{job_id}/cancel")
     def cancel(job_id: int):
-        db.job(job_id)
+        job = db.job(job_id)
         db.cancel_from_admin(job_id)
-        return {"status": "CANCELLED", "torrent_retained": True}
+        return {"status": "CANCELLED", "torrent_retained": True, "pause_pending": bool(job["torrent_hash"])}
 
     @app.post("/events/seerr")
     def webhook():

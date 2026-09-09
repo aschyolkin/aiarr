@@ -25,6 +25,11 @@ reopened by the same request; parallel approved requests and available media are
 retained. Live verification on the disposable Seerr 3.4.1/Jellyfin 10.11.11
 stack also passed: deleting the old approved request then creating a new one
 opened generation 2, with no production service or media path involved.
+
+Cancellation policy (migration 0005) is verified offline: an in-progress owned
+torrent is paused exactly once on the next worker tick while retained for review;
+a qBittorrent failure leaves it pending for retry. A live qBittorrent pause check
+remains part of the next isolated download lifecycle run.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
 identity/episode, studio matching, malformed/XXE XML, auth pages, rate limits,

@@ -108,3 +108,10 @@ class Downloader:
     def files(self, torrent_hash):
         self.info(torrent_hash)  # ownership check before accessing paths
         return self.client.torrents_files(torrent_hash=torrent_hash)
+
+    def pause(self, torrent_hash):
+        """Pause only a torrent that remains demonstrably owned by this engine."""
+        if self.info(torrent_hash) is None:
+            return False
+        self.client.torrents_stop(torrent_hashes=torrent_hash)
+        return True

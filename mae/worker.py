@@ -38,6 +38,7 @@ class Worker:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return False
+            self.pause_cancelled_downloads()
             if self.settings.jellyfin_key.get_secret_value():
                 self.reconcile_completed()
             jobs = self.db.execute(
@@ -65,6 +66,18 @@ class Worker:
                     )
                 )
             return True
+
+    def pause_cancelled_downloads(self):
+        for job in self.db.cancelled_downloads_to_pause():
+            try:
+                # Retain the torrent and files for tracker policy/review, but do
+                # not let a cancelled acquisition consume further bandwidth.
+                self.downloader.pause(job["torrent_hash"])
+                self.db.mark_cancel_pause_done(job["id"])
+            except Exception as exc:
+                log.warning(
+                    json.dumps({"event": "cancel_pause_failed", "job": job["id"], "type": type(exc).__name__})
+                )
 
     def reconcile_completed(self):
         for job in self.db.execute(

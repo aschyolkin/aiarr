@@ -108,7 +108,7 @@ class Database:
                 conn.execute(
                     text(
                         "UPDATE jobs SET state='REQUESTED',reason='SEERR_REREQUESTED',next_run=0,"
-                        "torrent_hash=NULL,candidate=NULL,decision=NULL,reserved=0,attempts=0,generation=:generation "
+                        "torrent_hash=NULL,candidate=NULL,decision=NULL,reserved=0,attempts=0,cancel_pause_done=0,generation=:generation "
                         "WHERE id=:id"
                     ),
                     {"id": job_id, "generation": generation},
@@ -124,7 +124,7 @@ class Database:
         now = time.time()
         with self.engine.begin() as conn:
             changed = conn.execute(
-                text("UPDATE jobs SET state='CANCELLED',reason='ADMIN_CANCELLED',next_run=:now WHERE id=:id AND state!='CANCELLED'"),
+                text("UPDATE jobs SET state='CANCELLED',reason='ADMIN_CANCELLED',next_run=:now,cancel_pause_done=0 WHERE id=:id AND state!='CANCELLED'"),
                 {"id": job_id, "now": now},
             )
             if not changed.rowcount:
@@ -144,7 +144,7 @@ class Database:
             return False
         changed = conn.execute(
             text(
-                "UPDATE jobs SET state='CANCELLED',reason='SEERR_REQUEST_NOT_ACTIVE',next_run=:now "
+                "UPDATE jobs SET state='CANCELLED',reason='SEERR_REQUEST_NOT_ACTIVE',next_run=:now,cancel_pause_done=0 "
                 "WHERE id=:id AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED')"
             ),
             {"id": job_id, "now": now},
@@ -152,6 +152,17 @@ class Database:
         if changed.rowcount:
             conn.execute(text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED','SEERR_REQUEST_NOT_ACTIVE',:now)"), {"id": job_id, "now": now})
         return bool(changed.rowcount)
+
+    def cancelled_downloads_to_pause(self):
+        return self.execute(
+            "SELECT id,torrent_hash FROM jobs WHERE state='CANCELLED' AND torrent_hash IS NOT NULL "
+            "AND cancel_pause_done=0 ORDER BY id"
+        )
+
+    def mark_cancel_pause_done(self, job_id):
+        self.execute(
+            "UPDATE jobs SET cancel_pause_done=1 WHERE id=:id AND state='CANCELLED'", id=job_id
+        )
 
     def record_coverage(self, job_id, coverage):
         # A fresh successful Jellyfin response replaces earlier observations.

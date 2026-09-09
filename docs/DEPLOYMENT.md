@@ -71,6 +71,12 @@ payload supplies `tags`; unknown IDs cause HTTP 422. Used tags cannot be deleted
 Schema 0004 adds the durable Seerr-request journal and generation counter. It is
 also forward-only: stop the app and take the same SQLite backup before upgrading.
 
+Schema 0005 records safe qBittorrent pausing after cancellation. A cancelled MAE
+torrent remains retained for explicit review and tracker policy, but the worker
+pauses it on the next tick after verifying category ownership. A temporary client
+failure remains pending and is retried; torrents outside category `mae` are never
+paused by the engine.
+
 ## Isolated real-service tests
 
 Prepare `e2e-data/seed` and `e2e-data/leecher` writable by UID 3000 on the staging
