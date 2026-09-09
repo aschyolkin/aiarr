@@ -18,6 +18,8 @@ class CatalogEntry:
 
 
 class StudioCatalog:
+    max_entries = 250
+
     def __init__(self, studio, base_url, http):
         self.studio, self.base_url, self.http = studio, base_url, http
 
@@ -36,13 +38,37 @@ class StudioCatalog:
     def search(self, query):
         raise ProviderError(Outcome.UNSUPPORTED_CAPABILITY)
 
+    def soup(self, url):
+        try:
+            raw = self.http.get(url)
+            text = raw.decode("utf-8", "strict")
+        except UnicodeError:
+            raise ProviderError(Outcome.PARSER_BROKEN) from None
+        return BeautifulSoup(text, "html.parser")
+
     def entry_url(self, href):
         """Keep catalog links on the studio's HTTPS origin."""
         url = urljoin(self.base_url, href)
         parsed, base = urlsplit(url), urlsplit(self.base_url)
-        if parsed.scheme != "https" or parsed.hostname != base.hostname:
+        if (
+            parsed.scheme != "https"
+            or parsed.hostname != base.hostname
+            or parsed.port not in (None, 443)
+            or parsed.username
+            or parsed.password
+        ):
             return None
         return url
+
+    def bounded(self, entries):
+        unique, seen = [], set()
+        for entry in entries:
+            if entry.url not in seen:
+                unique.append(entry)
+                seen.add(entry.url)
+            if len(unique) == self.max_entries:
+                break
+        return unique
 
 
 class AlexFilmCatalog(StudioCatalog):
@@ -50,7 +76,7 @@ class AlexFilmCatalog(StudioCatalog):
         super().__init__("AlexFilm", "https://alexfilm.tv/", http)
 
     def entries(self):
-        soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
+        soup = self.soup(self.base_url)
         result = []
         for title in soup.select(".elementor-post__title a[href]"):
             text = clean_text(title.get_text(" ", strip=True))
@@ -69,7 +95,7 @@ class AlexFilmCatalog(StudioCatalog):
                         else "",
                     )
                 )
-        return result
+        return self.bounded(result)
 
 
 class FlarrowCatalog(StudioCatalog):
@@ -77,7 +103,7 @@ class FlarrowCatalog(StudioCatalog):
         super().__init__("Flarrow Films", "https://fla-fi.studio/", http)
 
     def entries(self):
-        soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
+        soup = self.soup(self.base_url)
         result = []
         for card in soup.select(".short-desc"):
             parent = card.parent
@@ -86,7 +112,7 @@ class FlarrowCatalog(StudioCatalog):
             url = self.entry_url(link["href"]) if link else None
             if title and url:
                 result.append(CatalogEntry(self.studio, title, url, clean_text(str(card))))
-        return result
+        return self.bounded(result)
 
 
 class LostFilmCatalog(StudioCatalog):
@@ -94,7 +120,7 @@ class LostFilmCatalog(StudioCatalog):
         super().__init__("LostFilm", "https://www.lostfilm.tv/", http)
 
     def entries(self):
-        soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
+        soup = self.soup(self.base_url)
         result = []
         for card in soup.select('a.text-block[href^="/series/"]'):
             title = (
@@ -114,13 +140,10 @@ class LostFilmCatalog(StudioCatalog):
                         else "",
                     )
                 )
-        return result
+        return self.bounded(result)
 
     def search(self, query):
-        soup = BeautifulSoup(
-            self.http.get(self.base_url + "search/?q=" + quote(query)).decode("utf-8", "strict"),
-            "html.parser",
-        )
+        soup = self.soup(self.base_url + "search/?q=" + quote(query, safe=""))
         result = []
         for link in soup.select('.row-search a.no-decoration[href^="/series/"]'):
             ru, en = link.select_one(".name-ru"), link.select_one(".name-en")
@@ -132,7 +155,7 @@ class LostFilmCatalog(StudioCatalog):
                         self.studio, title, url, clean_text(en.get_text(" ", strip=True)) if en else ""
                     )
                 )
-        return result
+        return self.bounded(result)
 
 
 class RedHeadSoundCatalog(StudioCatalog):
@@ -140,7 +163,7 @@ class RedHeadSoundCatalog(StudioCatalog):
         super().__init__("Red Head Sound", "https://redheadsound.studio/", http)
 
     def entries(self):
-        soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
+        soup = self.soup(self.base_url)
         result = []
         for card in soup.select(".move-item"):
             link = card.select_one(".move-item__content h4 a[href]")
@@ -149,4 +172,4 @@ class RedHeadSoundCatalog(StudioCatalog):
                 url = self.entry_url(link["href"])
                 if title and url:
                     result.append(CatalogEntry(self.studio, title, url, ""))
-        return result
+        return self.bounded(result)
