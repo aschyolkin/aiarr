@@ -35,3 +35,14 @@ def test_stale_library_observation_cannot_override_new_episodes(db):
     assert db.observe_completed(snapshot, set()) is False
     assert db.job(job_id)["state"] == "REQUESTED"
     assert db.execute("SELECT available FROM episodes ORDER BY episode")[0]["available"] == 1
+
+
+def test_completed_series_ignores_unmonitored_episode(db):
+    work = Work(kind="series", external_id=8, title="Example", episodes=["S01E01", "S01E02"])
+    job_id = db.submit(work)
+    ignored = db.execute("SELECT id FROM episodes WHERE job_id=:id AND episode='S01E02'", id=job_id)[0]["id"]
+    db.set_episode_monitoring([ignored], False)
+    db.transition(job_id, "AVAILABLE")
+
+    assert db.observe_completed(db.job(job_id), {"S01E01"})
+    assert db.job(job_id)["state"] == "AVAILABLE"

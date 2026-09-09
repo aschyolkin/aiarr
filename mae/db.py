@@ -195,9 +195,18 @@ class Database:
 
     def observe_completed(self, job, coverage):
         work = json.loads(job["work"])
-        wanted = {"movie"} if work["kind"] == "movie" else set(work["episodes"])
-        missing = not wanted or not wanted.issubset(coverage)
         with self.engine.begin() as conn:
+            wanted = (
+                {"movie"}
+                if work["kind"] == "movie"
+                else {
+                    row[0]
+                    for row in conn.execute(
+                        text("SELECT episode FROM episodes WHERE job_id=:id AND monitored=1"), {"id": job["id"]}
+                    )
+                }
+            )
+            missing = not wanted or not wanted.issubset(coverage)
             changed = conn.execute(
                 text(
                     "UPDATE jobs SET state=:state,reason=:reason,next_run=:next "
