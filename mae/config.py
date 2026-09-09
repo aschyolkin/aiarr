@@ -9,7 +9,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class ProviderConfig(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,39}$")
-    protocol: Literal["torznab", "json"] = "torznab"
+    protocol: Literal["torznab", "json", "nnmclub"] = "torznab"
     url: str
     api_key: SecretStr = SecretStr("")
     # Explicit trust only for the configured gateway, never arbitrary source URLs.

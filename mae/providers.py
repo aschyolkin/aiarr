@@ -3,6 +3,7 @@ import json
 import time
 from urllib.parse import urljoin
 
+from bs4 import BeautifulSoup
 from defusedxml import ElementTree
 
 from mae.config import ProviderConfig
@@ -151,5 +152,82 @@ class JSONProvider(TorznabProvider):
             raise ProviderError(Outcome.PARSER_BROKEN) from None
 
 
+class NNMClubProvider:
+    """Anonymous NNM-Club public search/card adapter (Windows-1251)."""
+
+    def __init__(self, config, http=None):
+        self.config = config
+        self.http = http or SafeHTTP(f"https://{config.source_host}" if config.trusted_source else None)
+        self.handles = {}
+        self.last_request = 0.0
+
+    def capabilities(self):
+        return {"search", "details", "download"}
+
+    def authentication_status(self):
+        return {"source": "anonymous"}
+
+    def healthcheck(self):
+        self.search(type("Probe", (), {"title": "Big Buck Bunny", "year": None, "kind": "movie"})())
+        return {"status": "OK", "capabilities": sorted(self.capabilities())}
+
+    def _get(self, path, **params):
+        delay = self.config.interval - (time.monotonic() - self.last_request)
+        if delay > 0:
+            time.sleep(delay)
+        self.last_request = time.monotonic()
+        return self.http.get(urljoin(self.config.url, path), params=params)
+
+    def search(self, query):
+        raw = self._get("/forum/tracker.php", nm=query.title)
+        try:
+            soup = BeautifulSoup(raw.decode("windows-1251", errors="strict"), "html.parser")
+        except UnicodeError:
+            raise ProviderError(Outcome.PARSER_BROKEN) from None
+        if soup.select_one('input[type="password"]'):
+            raise ProviderError(Outcome.AUTH_REQUIRED)
+        results = []
+        for link in soup.select('a.topictitle[href^="viewtopic.php?t="]')[:100]:
+            row = link.find_parent("tr")
+            download = row.select_one('a[href^="download.php?id="]') if row else None
+            title = clean_text(link.get_text(" ", strip=True))
+            if not row or not download or not title:
+                continue
+            details_url = urljoin(self.config.url, "/forum/" + link["href"])
+            rid = hashlib.sha256(details_url.encode()).hexdigest()
+            self.handles[rid] = DownloadHandle(url=urljoin(self.config.url, "/forum/" + download["href"]))
+            results.append(SearchResult(provider=self.config.name, release_id=rid, title=title, details_url=details_url))
+        if not results and soup.select_one("#search_form") is None:
+            raise ProviderError(Outcome.PARSER_BROKEN)
+        return results
+
+    def fetch_details(self, release):
+        if not release.details_url or not release.details_url.startswith("https://nnmclub.to/forum/viewtopic.php?"):
+            raise ProviderError(Outcome.ACCESS_DENIED)
+        raw = self._get(release.details_url)
+        try:
+            soup = BeautifulSoup(raw.decode("windows-1251", errors="strict"), "html.parser")
+        except UnicodeError:
+            raise ProviderError(Outcome.PARSER_BROKEN) from None
+        card = soup.select_one(".post_body")
+        if card is None:
+            if soup.select_one('input[type="password"]'):
+                raise ProviderError(Outcome.AUTH_REQUIRED)
+            raise ProviderError(Outcome.PARSER_BROKEN)
+        text = clean_text(str(card))
+        if not text:
+            raise ProviderError(Outcome.PARSER_BROKEN)
+        return ReleaseDetails(evidence=[Evidence(id="card", text=text, method="nnmclub-card-v1")])
+
+    def fetch_file_list(self, release):
+        raise ProviderError(Outcome.UNSUPPORTED_CAPABILITY)
+
+    def resolve_download(self, release):
+        try:
+            return self.handles[release.release_id]
+        except KeyError:
+            raise ProviderError(Outcome.TEMPORARY_FAILURE) from None
+
+
 def make_provider(config):
-    return {"torznab": TorznabProvider, "json": JSONProvider}[config.protocol](config)
+    return {"torznab": TorznabProvider, "json": JSONProvider, "nnmclub": NNMClubProvider}[config.protocol](config)
