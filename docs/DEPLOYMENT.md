@@ -77,6 +77,10 @@ pauses it on the next tick after verifying category ownership. A temporary clien
 failure remains pending and is retried; torrents outside category `mae` are never
 paused by the engine.
 
+Schema 0006 adds persistent per-episode `monitored` state. It separates Seerr
+approval from user-desired coverage: unmonitoring does not delete an imported
+file, while enabling an approved episode reopens an available series job.
+
 ## Isolated real-service tests
 
 Prepare `e2e-data/seed` and `e2e-data/leecher` writable by UID 3000 on the staging

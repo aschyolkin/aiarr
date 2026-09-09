@@ -57,10 +57,9 @@ def test_separate_season_requests_stable_ids_and_observed_availability(settings,
     )
     db.record_coverage(job_id, set())
     assert not any(e["hasFile"] for e in client.get(url).json())
-    assert (
-        client.put("/sonarr/api/v3/episode/monitor", json={"episodeIds": ids, "monitored": False}).status_code
-        == 422
-    )
+    unmonitored = client.put("/sonarr/api/v3/episode/monitor", json={"episodeIds": ids[:1], "monitored": False})
+    assert unmonitored.status_code == 200
+    assert not next(row for row in client.get(url).json() if row["id"] == ids[0])["monitored"]
     db.transition(job_id, "CANCELLED")
     assert not any(e["monitored"] for e in client.get(url).json())
     assert (

@@ -174,6 +174,25 @@ class Database:
                     {"id": job_id, "episode": episode},
                 )
 
+    def desired_episodes(self, job_id):
+        return [r["episode"] for r in self.execute(
+            "SELECT episode FROM episodes WHERE job_id=:id AND monitored=1 ORDER BY episode", id=job_id
+        )]
+
+    def set_episode_monitoring(self, episode_ids, monitored):
+        with self.engine.begin() as conn:
+            rows = conn.execute(
+                text("SELECT id,job_id FROM episodes WHERE id IN (%s)" % ",".join(f":id{i}" for i in range(len(episode_ids)))),
+                {f"id{i}": value for i, value in enumerate(episode_ids)},
+            ).mappings().all()
+            if len(rows) != len(set(episode_ids)):
+                raise KeyError("EPISODE_NOT_FOUND")
+            for row in rows:
+                conn.execute(text("UPDATE episodes SET monitored=:monitored WHERE id=:id"), {"id": row["id"], "monitored": int(monitored)})
+            if monitored:
+                for job_id in {row["job_id"] for row in rows}:
+                    conn.execute(text("UPDATE jobs SET state='REQUESTED',next_run=0,reason=NULL WHERE id=:id AND state='AVAILABLE'"), {"id": job_id})
+
     def observe_completed(self, job, coverage):
         work = json.loads(job["work"])
         wanted = {"movie"} if work["kind"] == "movie" else set(work["episodes"])

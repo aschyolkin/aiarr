@@ -113,6 +113,8 @@ class Worker:
 
     def process(self, job):
         work = Work.model_validate_json(job["work"])
+        if work.kind == "series":
+            work = work.model_copy(update={"episodes": self.db.desired_episodes(job["id"])})
         if job["torrent_hash"]:
             return self.monitor(job, work)
         library_coverage = set()

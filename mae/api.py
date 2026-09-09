@@ -395,7 +395,7 @@ def create_app(settings=None, db=None, seerr=None):
                 "seriesId": job_id,
                 "seasonNumber": int(row["episode"].split("E")[0][1:]),
                 "episodeNumber": int(row["episode"].split("E")[1]),
-                "monitored": job["state"] != "CANCELLED",
+                    "monitored": bool(row["monitored"]) and job["state"] != "CANCELLED",
                 "hasFile": bool(row["available"]),
             }
             for row in db.execute("SELECT * FROM episodes WHERE job_id=:id ORDER BY episode", id=job_id)
@@ -409,13 +409,13 @@ def create_app(settings=None, db=None, seerr=None):
     def monitor_episodes(payload: dict):
         ids = payload.get("episodeIds")
         if (
-            payload.get("monitored") is not True
+            type(payload.get("monitored")) is not bool
             or not isinstance(ids, list)
             or not ids
             or len(ids) > 1000
             or any(type(i) is not int or i < 1 for i in ids)
         ):
-            raise HTTPException(422, "Approved episode monitoring requires positive IDs and monitored=true")
+            raise HTTPException(422, "Episode monitoring requires positive IDs")
         rows = []
         for episode_id in set(ids):
             result = db.execute("SELECT * FROM episodes WHERE id=:id", id=episode_id)
@@ -426,11 +426,12 @@ def create_app(settings=None, db=None, seerr=None):
             job = db.job(job_id)
             if job["state"] == "CANCELLED":
                 raise HTTPException(409, "Cancelled request requires a new approved request")
-            work = Work.model_validate_json(job["work"])
-            approved, _ = approved_work("series", work.external_id)
-            if not {r["episode"] for r in rows if r["job_id"] == job_id}.issubset(approved.episodes):
-                raise HTTPException(409, "Episode no longer approved")
-        # Desired episodes are monitored by definition; setting true is idempotent.
+            if payload["monitored"]:
+                work = Work.model_validate_json(job["work"])
+                approved, _ = approved_work("series", work.external_id)
+                if not {r["episode"] for r in rows if r["job_id"] == job_id}.issubset(approved.episodes):
+                    raise HTTPException(409, "Episode no longer approved")
+        db.set_episode_monitoring(ids, payload["monitored"])
         return [
             episode
             for job_id in sorted({r["job_id"] for r in rows})
