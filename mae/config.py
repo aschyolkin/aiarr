@@ -1,6 +1,8 @@
+import codecs
 from pathlib import Path
 from typing import Literal
 
+from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -13,10 +15,36 @@ class ProviderConfig(BaseModel):
     # Explicit trust only for the configured gateway, never arbitrary source URLs.
     trusted_gateway: bool = False
     source_host: str | None = None
+    # Opt-in for an operator-controlled source resolver, e.g. a Fake-IP proxy.
+    # It never applies to a redirect or to any other host.
+    trusted_source: bool = False
     details_selector: str | None = None
+    details_adapter: Literal["html", "rutor"] = "html"
     cookie: SecretStr = SecretStr("")
     encoding: str = "utf-8"
     interval: float = Field(default=2, ge=0, le=300)
+
+    @model_validator(mode="after")
+    def validate_enrichment(self):
+        if self.details_adapter == "rutor":
+            selector = "table#details > tr:first-child > td:last-child, table#details > tbody > tr:first-child > td:last-child"
+            if self.details_selector not in (None, selector):
+                raise ValueError("Rutor adapter owns its card selector")
+            self.details_selector = selector
+        if bool(self.source_host) != bool(self.details_selector):
+            raise ValueError("source_host and details_selector must be configured together")
+        if self.trusted_source and not self.source_host:
+            raise ValueError("trusted_source requires source_host")
+        try:
+            codecs.lookup(self.encoding)
+        except LookupError:
+            raise ValueError("Unknown source encoding") from None
+        if self.details_selector:
+            try:
+                BeautifulSoup("", "html.parser").select(self.details_selector)
+            except Exception:
+                raise ValueError("Invalid details_selector") from None
+        return self
 
 
 class Policy(BaseModel):

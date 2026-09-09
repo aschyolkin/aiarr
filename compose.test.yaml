@@ -1,6 +1,18 @@
 # No published ports or production mounts. Only Seerr has egress for metadata.
 name: mae-e2e
 services:
+  source-probe:
+    image: media-acquisition-engine:0.1.0-test
+    profiles: [live-sources]
+    user: "3000:3000"
+    entrypoint: [python, /tests/live_source_card.py]
+    volumes:
+      - ./tests:/tests:ro
+      - ./mae:/app/mae:ro
+    networks: [metadata]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    mem_limit: 512m
   seerr:
     image: ghcr.io/seerr-team/seerr:v3.4.1
     profiles: [full]

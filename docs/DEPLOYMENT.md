@@ -64,6 +64,10 @@ and every five minutes. A successful observation of missing media moves the job
 to review; failed HTTP observations retain its prior availability. Existing SQLite
 backups and the matching older image are required for rollback.
 
+Schema 0003 adds `tags` and `job_tags`. It is forward-only like the earlier
+migrations. The API accepts only existing positive tag IDs when a Seerr add/update
+payload supplies `tags`; unknown IDs cause HTTP 422. Used tags cannot be deleted.
+
 ## Isolated real-service tests
 
 Prepare `e2e-data/seed` and `e2e-data/leecher` writable by UID 3000 on the staging

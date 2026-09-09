@@ -1,13 +1,13 @@
 import hashlib
 import json
 import time
-from urllib.parse import urljoin, urlsplit
+from urllib.parse import urljoin
 
-from bs4 import BeautifulSoup
 from defusedxml import ElementTree
 
 from mae.config import ProviderConfig
 from mae.domain import DownloadHandle, Evidence, Outcome, ProviderError, ReleaseDetails, SearchResult
+from mae.enrichment import HTMLDetailsEnricher, RutorDetailsEnricher
 from mae.security import SafeHTTP, clean_text
 
 
@@ -18,9 +18,13 @@ class TorznabProvider:
         self.handles = {}
         self.descriptions = {}
         self.last_request = 0.0
+        adapter = RutorDetailsEnricher if config.details_adapter == "rutor" else HTMLDetailsEnricher
+        self.enricher = adapter(config) if config.details_selector else None
 
     def capabilities(self):
-        return {"search", "details", "download"}
+        return {"search", "details", "download"} | (
+            {"file_list"} if isinstance(self.enricher, RutorDetailsEnricher) else set()
+        )
 
     def _get(self, **params):
         remaining = self.config.interval - (time.monotonic() - self.last_request)
@@ -106,22 +110,13 @@ class TorznabProvider:
             evidence.append(
                 Evidence(id="description", text=self.descriptions[release.release_id], method="torznab")
             )
-        if self.config.source_host and self.config.details_selector and release.details_url:
-            if urlsplit(release.details_url).hostname != self.config.source_host:
-                raise ProviderError(Outcome.ACCESS_DENIED)
-            raw = SafeHTTP().get(
-                release.details_url, headers={"Cookie": self.config.cookie.get_secret_value()}
-            )
-            soup = BeautifulSoup(raw.decode(self.config.encoding, errors="replace"), "html.parser")
-            if soup.select('input[type="password"]'):
-                raise ProviderError(Outcome.AUTH_REQUIRED)
-            content = soup.select_one(self.config.details_selector)
-            if content is None:
-                raise ProviderError(Outcome.PARSER_BROKEN)
-            evidence.append(Evidence(id="card", text=clean_text(str(content)), method="source_card"))
+        if self.enricher:
+            evidence.extend(self.enricher.fetch_details(release).evidence)
         return ReleaseDetails(evidence=evidence)
 
     def fetch_file_list(self, release):
+        if isinstance(self.enricher, RutorDetailsEnricher):
+            return self.enricher.fetch_file_list(release)
         raise ProviderError(Outcome.UNSUPPORTED_CAPABILITY)
 
     def resolve_download(self, release):

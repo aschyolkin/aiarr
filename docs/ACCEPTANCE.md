@@ -15,7 +15,7 @@ hardlink publication; Jellyfin external-ID and episode coverage checks.
 
 ## Verified offline
 
-`uv run pytest -q`: **82 passed**, no skipped tests, two dependency deprecation
+`uv run pytest -q`: **107 passed**, no skipped tests, two dependency deprecation
 warnings at this checkpoint. `uv run ruff check mae migrations tests` passes.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
@@ -39,6 +39,9 @@ Completed jobs are rechecked every five minutes; HTTP failures preserve earlier
 observations, while a successful missing-media response requires review. A stale
 observation cannot overwrite a newly extended request. Combined episode names
 use contiguous ranges; gaps, duplicate numbers and reversed ranges are rejected.
+Migration 0003 stores Servarr-compatible tags and their job associations. Tags are
+validated on add/update, exposed by both facades, and cannot be deleted while a
+job references them.
 
 Upstream subsets: Faucet 106 passed; RTN 142; GuessIt API 30; Slimarr scoring 24.
 Prowlarr v11 Rutor/Kinozal definitions validated with upstream `scripts/validate.py`.
@@ -82,7 +85,17 @@ that attempted run failed and is not included in the pass count.
   First attempt failed safely with no download due to an incorrect test TMDB ID
   (12690 was Appaloosa). Correct ID **10378** and a title assertion are now used;
   earlier facade-only success remains valid as an Appaloosa request contract test.
+* After TMDB connectivity recovered, the live Seerr extension test passed: a
+  request for season 3 extended the existing season-2 series job to **26**
+  episodes. Existing episode IDs remained stable and approved monitoring passed.
+  Worker was not started for this metadata/contract test.
 * AlexFilm/Flarrow public catalog pages reachable through browsing; RHS fetch 403.
+* Rutor public topic `384544` and its page-provided flat file-list endpoint were
+  fetched from the NAS host. The concrete adapter and fixtures were implemented,
+  but its isolated-container request ended `TEMPORARY_FAILURE`: NAS local DNS
+  resolves the host to Fake-IP `198.18.0.144` while the container bridge has no
+  route through the host's proxy. `trusted_source` is an explicit exact-origin
+  option; it does not make this source reachable. No torrent payload was fetched.
 * New real Jellyfin series-library test passed: a synthetic `S01E01-E02` file
   was observed as episodes 1 and 2; publishing episode 3 changed coverage to 1–3.
   Uses the shared naming/hardlink code, exact TVDB ID and real Jellyfin 10.11.11.
@@ -92,10 +105,10 @@ that attempted run failed and is not included in the pass count.
   `[TMDB] Failed to fetch movie details: read ECONNRESET`. This is a failed live
   attempt, not a pass. Existing earlier movie/season and synthetic E2E passes
   remain historical results from their recorded checkpoints.
-* Latest clean container build failed while contacting `auth.docker.io`
-  (`connection reset by peer`). New live tests used the existing runtime image
-  plus read-only mounts of current application/migration source; dependencies
-  were unchanged. A clean release image rebuild is still required.
+* Clean test image rebuilt successfully after network recovery:
+  `sha256:3a02aca549ea7f08895bb5d9ec4732d7f4b3a6a8b16442ac2b269e93eb94a274`.
+  A fresh isolated Seerr/Jellyfin stack then passed movie request, selected season,
+  season 2→3 extension and 26 stable episode IDs with migrations 0001–0003.
 
 Real swarm command (requires staging directory prepared with UID 3000 write access):
 
@@ -110,8 +123,10 @@ docker compose -f compose.test.yaml down
 DeepSeek API key for official smoke test; LostFilm/NewStudio gateway setup and any
 interactive source login; approved private card fixtures or authenticated card
 access; actual LG G5/webOS/Jellyfin playback observation and network measurements.
-Outbound NAS access to TMDB and Docker Hub must work before completing the latest
-Seerr season-extension live test and clean container build. SSH access was restored.
+SSH access, TMDB connectivity and a clean test-image build were restored.
+The production source network must offer a permitted container route or gateway to
+Rutor before its adapter can be live-certified; host networking is not used as a
+workaround.
 Existing Prowlarr credentials remain on NAS and were never printed or copied into Git.
 
 ## Blocked by source / access method
@@ -121,8 +136,8 @@ access methods are blocked. No DRM/account restriction bypass attempted.
 
 ## Outstanding implementation / acceptance (not hidden as access blockers)
 
-Real-source movie E2E and series acquisition E2E, live season-extension contract,
-individual episode unmonitoring and tag contract,
+Real-source movie E2E and series acquisition E2E,
+individual episode unmonitoring,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
 catalog adapters, magnet metadata preflight, complete evidence/audio-track models

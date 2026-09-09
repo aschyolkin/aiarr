@@ -6,7 +6,7 @@ private fixtures have been imported. No random mirrors selected.
 | Source/address | Integration | Auth | Verified | Remaining limitation |
 |---|---|---|---|---|
 | RuTracker https://rutracker.org/ | Torznab + Jackett `RuTracker.cs`; optional separately configured card enricher | Account/captcha in gateway; card cookie separate | Upstream implementation audit, protocol fixtures | No account live search/download/card/file-list test |
-| Rutor http://rutor.info/ (upstream definition address; user must confirm reachable address) | Torznab + `rutor.yml` | Usually public | Definition located; protocol fixtures | Direct card and download live not tested |
+| Rutor https://rutor.info/ | Torznab + `rutor.yml`; concrete `rutor` HTML card/files adapter | Usually public | Public topic `384544` and `/descriptions/384544.files` fetched from NAS host; adapter fixtures pass | In Docker bridge, local DNS returns Fake-IP and source request is `TEMPORARY_FAILURE`; requires an explicitly configured source route/gateway. No torrent download attempted |
 | Kinozal https://kinozal.tv/ | Torznab + `kinozal.yml` | Account | Login/settings implementation inspected | Disable `addrussian`; card auth/live download not tested |
 | NNM-Club https://nnmclub.to/ (definition; confirm operator address) | Torznab + `noname-club.yml` | Account where required | Definition located | Spoiler/parser fixtures and live access outstanding |
 | LostFilm https://lostfilm.tv/ | Torznab + `LostFilm.cs` | Account/captcha | Login implementation inspected | Live numbering/quality/download tests outstanding |
@@ -18,7 +18,8 @@ private fixtures have been imported. No random mirrors selected.
 All five studio names recognized only in audio-scoped evidence, with equal default
 weights. This does not prove the actual audio performance or direct studio download.
 Configurable HTML enrichment is infrastructure, not six complete tested site parsers.
-`fetch_file_list` explicitly returns `UNSUPPORTED_CAPABILITY` for Torznab.
+`fetch_file_list` explicitly returns `UNSUPPORTED_CAPABILITY` for Torznab except the
+concrete Rutor card adapter, whose flat-file layout is checked before returning paths.
 Magnet handles are parsed but automatic acquisition waits for metadata preflight,
 which is not implemented yet.
 

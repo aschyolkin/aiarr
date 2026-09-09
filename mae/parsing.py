@@ -43,7 +43,7 @@ def parse_candidate(release, details):
             if not (direct_audio or audio_language):
                 continue
             # An audio and subtitle clause can share one line.
-            line = re.split(r"(?i)\b(?:subtitles?|субтитры|text)\s*[:：]?", line, maxsplit=1)[0]
+            line = re.split(r"(?i)(?:subtitles?|субтитры|text)\s*[:：]?", line, maxsplit=1)[0]
             if re.search(r"(?i)\b(?:not|no|without|нет|без|отсутствует)\b", line):
                 continue
             if re.search(r"(?i)\b(rus|russian|русский|русская)\b", line):

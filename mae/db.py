@@ -113,6 +113,76 @@ class Database:
                 )
             return True
 
+    def tags(self):
+        return self.execute("SELECT id,label FROM tags ORDER BY label COLLATE NOCASE,id")
+
+    def create_tag(self, label):
+        with self.engine.begin() as conn:
+            try:
+                result = conn.execute(text("INSERT INTO tags(label) VALUES(:label)"), {"label": label})
+            except Exception as exc:
+                if "UNIQUE constraint failed" in str(exc):
+                    raise ValueError("TAG_ALREADY_EXISTS") from None
+                raise
+            return {"id": result.lastrowid, "label": label}
+
+    def update_tag(self, tag_id, label):
+        with self.engine.begin() as conn:
+            try:
+                changed = conn.execute(
+                    text("UPDATE tags SET label=:label WHERE id=:id"), {"id": tag_id, "label": label}
+                )
+            except Exception as exc:
+                if "UNIQUE constraint failed" in str(exc):
+                    raise ValueError("TAG_ALREADY_EXISTS") from None
+                raise
+            if not changed.rowcount:
+                raise KeyError(tag_id)
+            return {"id": tag_id, "label": label}
+
+    def delete_tag(self, tag_id):
+        with self.engine.begin() as conn:
+            if conn.execute(text("SELECT 1 FROM job_tags WHERE tag_id=:id LIMIT 1"), {"id": tag_id}).first():
+                raise ValueError("TAG_IN_USE")
+            changed = conn.execute(text("DELETE FROM tags WHERE id=:id"), {"id": tag_id})
+            if not changed.rowcount:
+                raise KeyError(tag_id)
+
+    def tags_for_job(self, job_id):
+        return [
+            r["id"]
+            for r in self.execute(
+                "SELECT tags.id FROM tags JOIN job_tags ON tags.id=job_tags.tag_id "
+                "WHERE job_tags.job_id=:id ORDER BY tags.id",
+                id=job_id,
+            )
+        ]
+
+    def set_job_tags(self, job_id, tag_ids):
+        if len(tag_ids) != len(set(tag_ids)) or any(type(tag) is not int or tag < 1 for tag in tag_ids):
+            raise ValueError("INVALID_TAG_IDS")
+        with self.engine.begin() as conn:
+            existing = {
+                row[0]
+                for row in conn.execute(
+                    text(
+                        "SELECT id FROM tags WHERE id IN (%s)"
+                        % ",".join(f":tag{i}" for i in range(len(tag_ids)))
+                    )
+                    if tag_ids
+                    else text("SELECT id FROM tags WHERE 0"),
+                    {f"tag{i}": tag for i, tag in enumerate(tag_ids)},
+                )
+            }
+            if existing != set(tag_ids):
+                raise ValueError("UNKNOWN_TAG")
+            conn.execute(text("DELETE FROM job_tags WHERE job_id=:id"), {"id": job_id})
+            for tag_id in tag_ids:
+                conn.execute(
+                    text("INSERT INTO job_tags(job_id,tag_id) VALUES(:job,:tag)"),
+                    {"job": job_id, "tag": tag_id},
+                )
+
     def transition(self, job_id, state, reason=None, delay=0, **updates):
         allowed = {"attempts", "candidate", "torrent_hash", "reserved", "decision", "dry_run"}
         if set(updates) - allowed:

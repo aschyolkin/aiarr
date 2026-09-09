@@ -10,6 +10,7 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 import httpx
+from live_helpers import wait_http_ready
 
 from mae.security import clean_text
 
@@ -54,7 +55,7 @@ def main(acquire_fixture=False, extend_season=False):
     engine_host = socket.gethostbyname(socket.gethostname())
     engine_url = f"http://{engine_host}:8080"
     with httpx.Client(base_url=seerr_url, timeout=60, trust_env=False) as seerr:
-        status = seerr.get("/api/v1/status")
+        status = wait_http_ready(seerr, "/api/v1/status")
         status.raise_for_status()
         login = seerr.post(
             "/api/v1/auth/jellyfin",

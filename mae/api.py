@@ -151,7 +151,7 @@ def create_app(settings=None, db=None, seerr=None):
             "year": work.year,
             "qualityProfileId": 1,
             "profileId": 1,
-            "tags": [],
+            "tags": db.tags_for_job(job["id"]) if job else [],
             "monitored": not job or job["state"] != "CANCELLED",
             "titleSlug": str(work.external_id),
             "hasFile": bool(job and job["state"] == "AVAILABLE"),
@@ -230,7 +230,38 @@ def create_app(settings=None, db=None, seerr=None):
 
         @app.get(prefix + "/tag")
         def tags():
-            return []
+            return db.tags()
+
+        def valid_label(payload):
+            label = payload.get("label") if isinstance(payload, dict) else None
+            if (
+                not isinstance(label, str)
+                or not (1 <= len(label.strip()) <= 100)
+                or any(ord(c) < 32 for c in label)
+            ):
+                raise HTTPException(422, "Tag label must be 1-100 printable characters")
+            return label.strip()
+
+        @app.post(prefix + "/tag", status_code=201)
+        def create_tag(payload: dict):
+            try:
+                return db.create_tag(valid_label(payload))
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+
+        @app.put(prefix + "/tag/{tag_id}")
+        def update_tag(tag_id: int, payload: dict):
+            try:
+                return db.update_tag(tag_id, valid_label(payload))
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
+
+        @app.delete(prefix + "/tag/{tag_id}", status_code=204)
+        def delete_tag(tag_id: int):
+            try:
+                db.delete_tag(tag_id)
+            except ValueError as exc:
+                raise HTTPException(409, str(exc)) from None
 
         @app.get(prefix + "/languageprofile")
         def language():
@@ -284,6 +315,11 @@ def create_app(settings=None, db=None, seerr=None):
                     }
                 )
             job_id = db.submit(work, settings.dry_run)
+            if "tags" in payload:
+                try:
+                    db.set_job_tags(job_id, payload["tags"])
+                except ValueError as exc:
+                    raise HTTPException(422, str(exc)) from None
             return render(work, db.job(job_id))
 
         @app.delete(prefix + "/" + endpoint + "/{job_id}")

@@ -12,7 +12,7 @@ Access logging disabled to avoid query-key logging.
 | getSystemStatus | GET system/status | Actual engine version and facade urlBase; no fake Radarr version | Live Seerr connection test passed |
 | getProfiles | GET qualityProfile | Actual configured policy ID/version | `test_movie_and_selected_season` |
 | getRootFolders | GET rootfolder | Canonical path, actual disk free/total | Implemented; requires mounted path |
-| getTags | GET tag | Empty configured tag set | Implemented; tag creation not supported |
+| getTags/createTag/updateTag/deleteTag | GET/POST/PUT/DELETE tag | Persistent labels; job tag IDs validated; used tag cannot be deleted | `test_servarr_tags_are_persistent_and_validated` |
 | getMovieByTmdbId | GET movie/lookup?term=tmdb:N | Approved Seerr metadata only | `test_movie_and_selected_season` |
 | addMovie | POST movie | Approval rechecked, durable idempotent job | Same test |
 | getMovies/getMovie | GET movie[/N] | DB job and imported availability | Implemented |
@@ -22,8 +22,7 @@ Access logging disabled to avoid query-key logging.
 | getQueue | GET queue | Persisted active downloads/imports | Implemented, progress fields incomplete |
 | deleteMovie/deleteSeries | DELETE movie/N or series/N | Cancel; refuses deleteFiles=true | `test_cancel_no_delete` |
 | getLanguageProfiles | GET languageprofile | Russian profile | Implemented |
-| getEpisodes/monitorEpisodes | GET episode / PUT episode/monitor | Persistent episode IDs; actual desired monitoring; recheck approval for monitored=true | Offline contract passed; live extension blocked by Seerr→TMDB ECONNRESET |
-| createTag/updateTag | POST tag / PUT tag/N | **Outstanding** | HTTP 404/405 |
+| getEpisodes/monitorEpisodes | GET episode / PUT episode/monitor | Persistent episode IDs; actual desired monitoring; recheck approval for monitored=true | Offline and real Seerr extension passed: seasons 2→3, 26 episodes |
 
 Webhook POST `/events/seerr` re-fetches approved requests; does not trust event
 fields as authorization. Worker polls every 300 seconds and deduplicates external
@@ -42,11 +41,14 @@ connection tests, movie POST and selected-season POST passed; 2 dry-run jobs,
 The opt-in `--acquire-fixture` variant additionally completes a synthetic movie
 through the actual worker and checks facade `hasFile=true` after Jellyfin discovery.
 It does not certify Seerr's own periodic availability scan or series acquisition.
+`--extend-season` was later run successfully after TMDB connectivity recovered:
+the real Seerr instance added season 3 to the existing selected season 2, retained
+existing episode IDs, and accepted approved episode monitoring. It starts no worker.
 Setup requires Jellyfin `urlBase: ""`, `serverType: 2`; Sonarr settings require
 `enableSeasonFolders`. `MainSettings.apiKey` is read-only: fetch it through the
 authenticated API and pass it to the temporary engine process in memory.
 
-Limitations: completion/cancellation propagation, generation-aware
-re-request, individual episode unmonitoring and full metadata lookup contract are not accepted yet.
+Limitations: completion/cancellation propagation, generation-aware re-request,
+individual episode unmonitoring and full metadata lookup contract are not accepted yet.
 Offline facade tests use a controlled double; the separate live test uses real Seerr.
 Production must not be switched based on these tests alone.

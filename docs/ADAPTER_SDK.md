@@ -23,3 +23,9 @@ No raw links in evidence. Source HTTP validates and pins public IPs, forbids
 redirects and caps decompressed response bytes. Gateway private-network access
 requires exact configured origin. Automatic redirect handling is deliberately
 unsupported until an explicit allowlist implementation is tested.
+
+Some operator networks intentionally resolve an external source to a Fake-IP for
+their own proxy. Set `trusted_source: true` only for that exact configured HTTPS
+`source_host`. This is an explicit operator trust boundary: it permits that one
+origin to use the local resolver, while redirects, other domains and untrusted
+sources remain pinned and rejected. It is never inferred from DNS results.

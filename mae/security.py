@@ -10,10 +10,24 @@ from mae.domain import Outcome, ProviderError
 
 
 def clean_text(value: str) -> str:
-    soup = BeautifulSoup(value[:128000], "html.parser")
+    value = value[:128000]
+    # BBCode formatting has no semantic authority; preserve its text and boundaries.
+    value = re.sub(r"(?i)\[/?(?:b|i|u|s|size|color|font|url)(?:=[^\]]{0,1000})?\]", "", value)
+    value = re.sub(r"(?i)\[/?(?:quote|code|spoiler|list|\*)(?:=[^\]]{0,1000})?\]", "\n", value)
+    soup = BeautifulSoup(value, "html.parser")
     for tag in soup(["script", "style", "iframe", "form", "object"]):
         tag.decompose()
-    text = soup.get_text("\n", strip=True)
+    for tag in soup.find_all("br"):
+        tag.replace_with("\n")
+    for tag in soup.find_all(["p", "div", "pre", "li", "tr", "blockquote", "h1", "h2", "h3"]):
+        tag.insert_before("\n")
+        tag.insert_after("\n")
+    for tag in soup.find_all(["td", "th"]):
+        tag.insert_before(" ")
+        tag.insert_after(" ")
+    # Inline markup must not split 'Audio: Russian' into unrelated lines.
+    text = soup.get_text("", strip=False)
+    text = "\n".join(line.strip() for line in text.splitlines() if line.strip())
     text = re.sub(r"(?i)(?:https?://|magnet:)[^\s<>\"']+", "[URL removed]", text)
     text = re.sub(
         r"(?im)^.*(?:cookie|authorization|passkey|api.?key|password|token|email|e-mail).*$",

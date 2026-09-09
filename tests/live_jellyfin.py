@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 
 import httpx
+from live_helpers import wait_http_ready
 from pydantic import SecretStr
 
 from mae.config import Settings
@@ -23,7 +24,7 @@ def main():
     publish_hardlink(source, target, root)
     url = f"http://{socket.gethostbyname('jellyfin')}:8096"
     with httpx.Client(base_url=url, timeout=30, trust_env=False) as client:
-        status = client.get("/System/Info/Public")
+        status = wait_http_ready(client, "/System/Info/Public")
         status.raise_for_status()
         if not status.json()["StartupWizardCompleted"]:
             client.post(
