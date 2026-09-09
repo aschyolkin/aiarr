@@ -19,8 +19,16 @@ def test_untrusted_title_stays_in_library(movie, title):
     assert "\x00" not in str(result)
 
 
-@pytest.mark.parametrize("episode", [None, "../../escape", "S01E01+S02E01"])
+@pytest.mark.parametrize(
+    "episode", [None, "../../escape", "S01E01+S02E01", "S01E01+S01E03", "S01E02+S01E01", "S01E01+S01E01"]
+)
 def test_ambiguous_episode_destination_rejected(movie, episode):
     series = movie.model_copy(update={"kind": "series"})
     with pytest.raises(ValueError):
         destination_for(series, Path("release.mkv"), Path("/data/store"), episode)
+
+
+def test_combined_episode_name_has_exact_contiguous_range(movie):
+    series = movie.model_copy(update={"kind": "series"})
+    path = destination_for(series, Path("release.mkv"), Path("/data/store"), "S02E01+S02E02")
+    assert path.name == "Example - S02E01-E02.mkv"

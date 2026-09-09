@@ -109,14 +109,22 @@ def create_app(settings=None, db=None, seerr=None):
         }
 
     def approved_work(kind, external_id):
+        approved = []
         for req in seerr.approved():
             req_kind = "movie" if req["type"] == "movie" else "series"
             if (
                 req_kind == kind
                 and req["media"].get("tmdbId" if kind == "movie" else "tvdbId") == external_id
             ):
-                return seerr.work(req)
-        raise HTTPException(409, "No approved Seerr request for this work")
+                approved.append(seerr.work(req))
+        if not approved:
+            raise HTTPException(409, "No approved Seerr request for this work")
+        return approved[-1].model_copy(
+            update={
+                "seasons": sorted({s for work in approved for s in work.seasons}),
+                "episodes": sorted({ep for work in approved for ep in work.episodes}),
+            }
+        )
 
     def render(work, job=None):
         imports = (
@@ -127,6 +135,17 @@ def create_app(settings=None, db=None, seerr=None):
         covered = set()
         for item in imports:
             covered.update((item["episode"] or "").split("+"))
+        if work.kind == "series":
+            covered = (
+                {
+                    e["episode"]
+                    for e in db.execute(
+                        "SELECT episode FROM episodes WHERE job_id=:id AND available=1", id=job["id"]
+                    )
+                }
+                if job
+                else set()
+            )
         result = {
             "title": work.title,
             "year": work.year,
@@ -324,4 +343,58 @@ def create_app(settings=None, db=None, seerr=None):
 
     register("movie")
     register("series")
+
+    def episode_rows(job_id):
+        job = db.job(job_id)
+        if not job["identity"].startswith("series:"):
+            raise HTTPException(404, "Series not found")
+        return [
+            {
+                "id": row["id"],
+                "seriesId": job_id,
+                "seasonNumber": int(row["episode"].split("E")[0][1:]),
+                "episodeNumber": int(row["episode"].split("E")[1]),
+                "monitored": job["state"] != "CANCELLED",
+                "hasFile": bool(row["available"]),
+            }
+            for row in db.execute("SELECT * FROM episodes WHERE job_id=:id ORDER BY episode", id=job_id)
+        ]
+
+    @app.get("/sonarr/api/v3/episode")
+    def episodes(seriesId: int):
+        return episode_rows(seriesId)
+
+    @app.put("/sonarr/api/v3/episode/monitor")
+    def monitor_episodes(payload: dict):
+        ids = payload.get("episodeIds")
+        if (
+            payload.get("monitored") is not True
+            or not isinstance(ids, list)
+            or not ids
+            or len(ids) > 1000
+            or any(type(i) is not int or i < 1 for i in ids)
+        ):
+            raise HTTPException(422, "Approved episode monitoring requires positive IDs and monitored=true")
+        rows = []
+        for episode_id in set(ids):
+            result = db.execute("SELECT * FROM episodes WHERE id=:id", id=episode_id)
+            if not result:
+                raise HTTPException(404, "Episode not found")
+            rows.extend(result)
+        for job_id in {row["job_id"] for row in rows}:
+            job = db.job(job_id)
+            if job["state"] == "CANCELLED":
+                raise HTTPException(409, "Cancelled request requires a new approved request")
+            work = Work.model_validate_json(job["work"])
+            approved = approved_work("series", work.external_id)
+            if not {r["episode"] for r in rows if r["job_id"] == job_id}.issubset(approved.episodes):
+                raise HTTPException(409, "Episode no longer approved")
+        # Desired episodes are monitored by definition; setting true is idempotent.
+        return [
+            episode
+            for job_id in sorted({r["job_id"] for r in rows})
+            for episode in episode_rows(job_id)
+            if episode["id"] in ids
+        ]
+
     return app

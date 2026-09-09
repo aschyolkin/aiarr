@@ -52,6 +52,11 @@ class Database:
                     text("UPDATE jobs SET work=:work WHERE id=:id"),
                     {"work": merged.model_dump_json(), "id": row["id"]},
                 )
+                for episode in merged.episodes:
+                    conn.execute(
+                        text("INSERT OR IGNORE INTO episodes(job_id,episode) VALUES(:job,:episode)"),
+                        {"job": row["id"], "episode": episode},
+                    )
                 if set(merged.episodes) - set(previous["episodes"]) and row["state"] == "AVAILABLE":
                     conn.execute(
                         text(
@@ -61,6 +66,52 @@ class Database:
                         {"id": row["id"]},
                     )
             return row["id"]
+
+    def record_coverage(self, job_id, coverage):
+        # A fresh successful Jellyfin response replaces earlier observations.
+        with self.engine.begin() as conn:
+            conn.execute(text("UPDATE episodes SET available=0 WHERE job_id=:id"), {"id": job_id})
+            for episode in coverage:
+                conn.execute(
+                    text("UPDATE episodes SET available=1 WHERE job_id=:id AND episode=:episode"),
+                    {"id": job_id, "episode": episode},
+                )
+
+    def observe_completed(self, job, coverage):
+        work = json.loads(job["work"])
+        wanted = {"movie"} if work["kind"] == "movie" else set(work["episodes"])
+        missing = not wanted or not wanted.issubset(coverage)
+        with self.engine.begin() as conn:
+            changed = conn.execute(
+                text(
+                    "UPDATE jobs SET state=:state,reason=:reason,next_run=:next "
+                    "WHERE id=:id AND state='AVAILABLE' AND work=:work"
+                ),
+                {
+                    "state": "NEEDS_REVIEW" if missing else "AVAILABLE",
+                    "reason": "LIBRARY_ITEM_MISSING" if missing else job["reason"],
+                    "next": time.time() + 300,
+                    "id": job["id"],
+                    "work": job["work"],
+                },
+            )
+            if not changed.rowcount:
+                return False  # A new request/cancellation superseded this snapshot.
+            conn.execute(text("UPDATE episodes SET available=0 WHERE job_id=:id"), {"id": job["id"]})
+            for episode in coverage:
+                conn.execute(
+                    text("UPDATE episodes SET available=1 WHERE job_id=:id AND episode=:episode"),
+                    {"id": job["id"], "episode": episode},
+                )
+            if missing:
+                conn.execute(
+                    text(
+                        "INSERT INTO events(job_id,state,reason,created) "
+                        "VALUES(:id,'NEEDS_REVIEW','LIBRARY_ITEM_MISSING',:now)"
+                    ),
+                    {"id": job["id"], "now": time.time()},
+                )
+            return True
 
     def transition(self, job_id, state, reason=None, delay=0, **updates):
         allowed = {"attempts", "candidate", "torrent_hash", "reserved", "decision", "dry_run"}

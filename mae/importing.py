@@ -14,7 +14,12 @@ def destination_for(work, source, store, episode=None):
         if len(seasons) != 1:
             raise ValueError("CROSS_SEASON_COMBINED_FILE")
         folder = folder / f"Season {int(next(iter(seasons))[1:]):02d}"
-        name = f"{title} - {episode}"
+        keys = episode.split("+")
+        numbers = [int(key.split("E")[1]) for key in keys]
+        if numbers != list(range(numbers[0], numbers[-1] + 1)):
+            raise ValueError("NONCONTIGUOUS_COMBINED_EPISODES")
+        label = keys[0] + (f"-E{numbers[-1]:02d}" if len(keys) > 1 else "")
+        name = f"{title} - {label}"
     else:
         name = folder_name
     return folder / (name + source.suffix.lower())

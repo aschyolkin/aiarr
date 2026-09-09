@@ -1,0 +1,99 @@
+import subprocess
+from pathlib import Path
+from unittest.mock import Mock
+
+import httpx
+import pytest
+
+from mae.domain import Work
+from mae.worker import Worker
+
+
+@pytest.fixture
+def series_env(settings, tmp_path, respx_mock):
+    root = tmp_path / "store"
+    folder = root / "downloads/serials"
+    folder.mkdir(parents=True)
+    for ep, language in [(1, "rus"), (2, "eng")]:
+        subprocess.run(
+            [
+                "ffmpeg",
+                "-v",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "color=s=1920x1080:r=1",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc",
+                "-t",
+                "1",
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-c:a",
+                "aac",
+                "-metadata:s:a:0",
+                f"language={language}",
+                str(folder / f"Example.S01E{ep:02d}.1080p.WEB-DL.H264.mkv"),
+            ],
+            check=True,
+            timeout=30,
+        )
+    settings = settings.model_copy(update={"store": root, "dry_run": False, "jellyfin_key": settings.api_key})
+    respx_mock.post(settings.jellyfin_url + "/Library/Refresh").mock(return_value=httpx.Response(204))
+    respx_mock.get(settings.jellyfin_url + "/Items").mock(
+        return_value=httpx.Response(200, json={"Items": [{"Id": "show", "ProviderIds": {"Tvdb": "8"}}]})
+    )
+    episodes_route = respx_mock.get(settings.jellyfin_url + "/Shows/show/Episodes")
+    episodes_route.mock(return_value=httpx.Response(200, json={"Items": []}))
+    downloader = Mock()
+    downloader.info.return_value = {"progress": 1, "state": "uploading", "save_path": str(folder)}
+    work = Work(kind="series", external_id=8, title="Example", seasons=[1], episodes=["S01E01", "S01E02"])
+    return settings, downloader, work, folder, episodes_route
+
+
+def test_partial_import_and_disappeared_episode_never_complete_season(db, series_env):
+    settings, downloader, work, folder, route = series_env
+    job_id = db.submit(work, False)
+    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
+    downloader.files.return_value = [{"name": "Example.S01E01.1080p.WEB-DL.H264.mkv"}]
+    route.mock(
+        return_value=httpx.Response(
+            200,
+            json={
+                "Items": [
+                    {"Path": "/data/store/serials/episode.mkv", "ParentIndexNumber": 1, "IndexNumber": 1}
+                ]
+            },
+        )
+    )
+    Worker(settings, db, [], downloader).tick()
+    assert db.job(job_id)["state"] == "WAITING_FOR_RELEASE"
+    assert db.job(job_id)["reason"] == "PARTIAL_SEASON"
+    assert db.job(job_id)["torrent_hash"] is None
+    imported = db.execute("SELECT * FROM imports")[0]
+    assert Path(imported["destination"]).stat().st_ino == Path(imported["source"]).stat().st_ino
+    assert db.execute("SELECT COUNT(*) n FROM episodes WHERE available=1")[0]["n"] == 1
+    route.mock(return_value=httpx.Response(200, json={"Items": []}))
+    db.execute("UPDATE jobs SET next_run=0 WHERE id=:id", id=job_id)
+    Worker(settings, db, [], downloader).tick()
+    assert db.job(job_id)["reason"] == "IMPORTED_EPISODES_MISSING_FROM_LIBRARY"
+    assert db.job(job_id)["state"] == "NEEDS_REVIEW"
+    assert db.execute("SELECT COUNT(*) n FROM episodes WHERE available=1")[0]["n"] == 0
+    downloader.add.assert_not_called()
+
+
+def test_every_episode_probed_before_publishing_pack(db, series_env):
+    settings, downloader, work, folder, _ = series_env
+    job_id = db.submit(work, False)
+    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
+    downloader.files.return_value = [{"name": p.name} for p in sorted(folder.glob("*.mkv"))]
+    Worker(settings, db, [], downloader).tick()
+    assert db.job(job_id)["reason"] == "RUSSIAN_AUDIO_NOT_TAGGED"
+    assert db.job(job_id)["state"] == "NEEDS_REVIEW"
+    assert not db.execute("SELECT * FROM imports")
+    assert not list((settings.store / "serials").glob("**/*.mkv"))

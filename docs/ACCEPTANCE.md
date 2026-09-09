@@ -15,7 +15,7 @@ hardlink publication; Jellyfin external-ID and episode coverage checks.
 
 ## Verified offline
 
-`uv run pytest -q`: **72 passed**, no skipped tests, two dependency deprecation
+`uv run pytest -q`: **82 passed**, no skipped tests, two dependency deprecation
 warnings at this checkpoint. `uv run ruff check mae migrations tests` passes.
 Tests include authentication, approved-only facade writes, selected seasons,
 event deduplication and restart, title/subtitle language false positives, wrong
@@ -31,6 +31,14 @@ New-episode reopening clears stale torrent intent/candidate while retaining impo
 history. All-provider temporary failures consume bounded attempts and respect
 Retry-After (including a two-hour rate-limit regression). This retry change is
 offline-tested; the live image below predates that isolated retry change.
+Migration 0002 backfills stable episode IDs without inventing availability.
+Offline tests cover multiple approved season requests, stable IDs across restart,
+approved-only episode monitoring, partial season import, an invalid second file
+preventing publication of an entire pack, and disappearance from Jellyfin.
+Completed jobs are rechecked every five minutes; HTTP failures preserve earlier
+observations, while a successful missing-media response requires review. A stale
+observation cannot overwrite a newly extended request. Combined episode names
+use contiguous ranges; gaps, duplicate numbers and reversed ranges are rejected.
 
 Upstream subsets: Faucet 106 passed; RTN 142; GuessIt API 30; Slimarr scoring 24.
 Prowlarr v11 Rutor/Kinozal definitions validated with upstream `scripts/validate.py`.
@@ -75,6 +83,19 @@ that attempted run failed and is not included in the pass count.
   (12690 was Appaloosa). Correct ID **10378** and a title assertion are now used;
   earlier facade-only success remains valid as an Appaloosa request contract test.
 * AlexFilm/Flarrow public catalog pages reachable through browsing; RHS fetch 403.
+* New real Jellyfin series-library test passed: a synthetic `S01E01-E02` file
+  was observed as episodes 1 and 2; publishing episode 3 changed coverage to 1–3.
+  Uses the shared naming/hardlink code, exact TVDB ID and real Jellyfin 10.11.11.
+  This test directly publishes synthetic fixtures; it is not a series download E2E.
+* New source-mounted API passed both real Seerr connection tests. The new
+  `--extend-season` flow could not proceed: Seerr returned HTTP 500 with
+  `[TMDB] Failed to fetch movie details: read ECONNRESET`. This is a failed live
+  attempt, not a pass. Existing earlier movie/season and synthetic E2E passes
+  remain historical results from their recorded checkpoints.
+* Latest clean container build failed while contacting `auth.docker.io`
+  (`connection reset by peer`). New live tests used the existing runtime image
+  plus read-only mounts of current application/migration source; dependencies
+  were unchanged. A clean release image rebuild is still required.
 
 Real swarm command (requires staging directory prepared with UID 3000 write access):
 
@@ -89,6 +110,8 @@ docker compose -f compose.test.yaml down
 DeepSeek API key for official smoke test; LostFilm/NewStudio gateway setup and any
 interactive source login; approved private card fixtures or authenticated card
 access; actual LG G5/webOS/Jellyfin playback observation and network measurements.
+Outbound NAS access to TMDB and Docker Hub must work before completing the latest
+Seerr season-extension live test and clean container build. SSH access was restored.
 Existing Prowlarr credentials remain on NAS and were never printed or copied into Git.
 
 ## Blocked by source / access method
@@ -98,7 +121,8 @@ access methods are blocked. No DRM/account restriction bypass attempted.
 
 ## Outstanding implementation / acceptance (not hidden as access blockers)
 
-Real-source movie E2E and series acquisition E2E, episode-monitor/tag contract,
+Real-source movie E2E and series acquisition E2E, live season-extension contract,
+individual episode unmonitoring and tag contract,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
 catalog adapters, magnet metadata preflight, complete evidence/audio-track models

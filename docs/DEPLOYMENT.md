@@ -57,6 +57,13 @@ No Bazarr, subtitle fetching, torrent streaming, debrid or player added.
 Automatic subtitle display is a Jellyfin user/device preference and remains an
 explicit unperformed live configuration check.
 
+Schema 0002 introduces persistent episode IDs and cached Jellyfin availability.
+Run `mae migrate` before starting the new API/worker. Existing episode coverage
+starts unconfirmed; the worker rechecks completed jobs against Jellyfin at startup
+and every five minutes. A successful observation of missing media moves the job
+to review; failed HTTP observations retain its prior availability. Existing SQLite
+backups and the matching older image are required for rollback.
+
 ## Isolated real-service tests
 
 Prepare `e2e-data/seed` and `e2e-data/leecher` writable by UID 3000 on the staging
@@ -77,6 +84,20 @@ memory, and never starts a worker. A rerun requires a fresh Seerr request store:
 `docker compose -f compose.test.yaml --profile full up -d --force-recreate seerr`.
 Wait for server startup before invoking tests. Fixture media remains in e2e-data
 after shutdown. These separate legs do not certify full end-to-end acquisition.
+The test service mounts current `mae` and `migrations` read-only over the runtime
+image. This permits source integration tests with a cached image when registries
+are unavailable, provided locked dependencies have not changed. It does not replace
+a clean release image build. `--extend-season` on `live_seerr.py` exercises a new
+Seerr request for season 3 after season 2, checking stable episode IDs and one series
+job. Use a fresh Seerr config for each invocation.
+
+Combined episodes are named with a contiguous range such as `S02E01-E02`, as
+specified in [Jellyfin's show naming documentation](https://jellyfin.org/docs/general/server/media/shows/).
+Noncontiguous, reversed, duplicate, or cross-season combinations require review.
+After the Jellyfin movie setup, `live_series_library.py` can be invoked using the
+same test container command. It checks real discovery of a combined file and a
+later single episode without TMDB access. Use a fresh synthetic series directory
+and test Shows library; it intentionally refuses to overwrite existing fixtures.
 
 For the worker-driven synthetic movie E2E, use a fresh staging media directory
 and fresh service configs. Run the qBittorrent and Jellyfin setup tests above,

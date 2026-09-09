@@ -11,6 +11,8 @@ from pathlib import Path
 
 import httpx
 
+from mae.security import clean_text
+
 
 @contextmanager
 def engine_process(seerr_url, seerr_key, overrides=None):
@@ -45,7 +47,7 @@ def engine_process(seerr_url, seerr_key, overrides=None):
         process.wait(timeout=15)
 
 
-def main(acquire_fixture=False):
+def main(acquire_fixture=False, extend_season=False):
     for suffix in ("films", "serials", "downloads/films", "downloads/serials"):
         (Path("/data/store") / suffix).mkdir(parents=True, exist_ok=True)
     seerr_url = f"http://{socket.gethostbyname('seerr')}:5055"
@@ -90,6 +92,8 @@ def main(acquire_fixture=False):
                 )
             )
             jobs = exercise_requests(seerr, engine_host, engine_url, dry_run=not acquire_fixture)
+            if extend_season:
+                exercise_season_extension(seerr, engine_url, jobs)
             if fixture:
                 fixture.finish(env, engine_url, jobs)
 
@@ -140,6 +144,10 @@ def exercise_requests(seerr, engine_host, engine_url, dry_run=True):
             if seasons:
                 payload["seasons"] = seasons
             response = seerr.post("/api/v1/request", json=payload)
+            if response.is_error:
+                raise AssertionError(
+                    f"Seerr request failed ({response.status_code}): {clean_text(response.text)[:1000]}"
+                )
             response.raise_for_status()
             print(
                 json.dumps({"stage": "request", "kind": kind, "http_status": response.status_code}),
@@ -187,5 +195,53 @@ def exercise_requests(seerr, engine_host, engine_url, dry_run=True):
     raise AssertionError("Seerr did not deliver both requests to engine")
 
 
+def exercise_season_extension(seerr, engine_url, jobs):
+    series = next(j for j in jobs if json.loads(j["work"])["kind"] == "series")
+    with httpx.Client(
+        base_url=engine_url,
+        timeout=30,
+        trust_env=False,
+        headers={"X-Api-Key": "isolated-engine-key-000000000000"},
+    ) as engine:
+        path = f"/sonarr/api/v3/episode?seriesId={series['id']}"
+        before = engine.get(path)
+        before.raise_for_status()
+        old_ids = {e["episodeNumber"]: e["id"] for e in before.json()}
+        assert len(old_ids) == 13 and all(e["seasonNumber"] == 2 for e in before.json())
+        request = seerr.post(
+            "/api/v1/request", json={"mediaType": "tv", "mediaId": 1396, "is4k": False, "seasons": [3]}
+        )
+        request.raise_for_status()
+        for _ in range(30):
+            response = engine.get(path)
+            response.raise_for_status()
+            episodes = response.json()
+            if {e["seasonNumber"] for e in episodes} == {2, 3}:
+                assert {e["episodeNumber"]: e["id"] for e in episodes if e["seasonNumber"] == 2} == old_ids
+                assert all(e["monitored"] and not e["hasFile"] for e in episodes)
+                monitor = engine.put(
+                    "/sonarr/api/v3/episode/monitor",
+                    json={"episodeIds": [e["id"] for e in episodes], "monitored": True},
+                )
+                monitor.raise_for_status()
+                assert len(monitor.json()) == len(episodes)
+                assert len(engine.get("/admin/jobs").json()) == 2
+                print(
+                    json.dumps(
+                        {
+                            "result": "PASS",
+                            "scope": "real Seerr existing-series update, stable episode IDs and approved monitoring",
+                            "seasons": [2, 3],
+                            "episodes": len(episodes),
+                            "worker_started": False,
+                        }
+                    ),
+                    flush=True,
+                )
+                return
+            time.sleep(2)
+        raise AssertionError("Seerr did not extend existing series with selected season 3")
+
+
 if __name__ == "__main__":
-    main(acquire_fixture="--acquire-fixture" in sys.argv)
+    main(acquire_fixture="--acquire-fixture" in sys.argv, extend_season="--extend-season" in sys.argv)

@@ -38,6 +38,8 @@ class Worker:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return False
+            if self.settings.jellyfin_key.get_secret_value():
+                self.reconcile_completed()
             jobs = self.db.execute(
                 "SELECT * FROM jobs WHERE next_run<=:now AND state NOT IN "
                 "('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED') ORDER BY next_run,id",
@@ -64,6 +66,31 @@ class Worker:
                 )
             return True
 
+    def reconcile_completed(self):
+        for job in self.db.execute(
+            "SELECT * FROM jobs WHERE state='AVAILABLE' AND next_run<=:now", now=time.time()
+        ):
+            try:
+                coverage = Jellyfin(self.settings).coverage(Work.model_validate_json(job["work"]))
+                self.db.observe_completed(job, coverage)
+            except Exception as exc:
+                # Failed observations are unknown, never evidence that a file vanished.
+                self.db.execute(
+                    "UPDATE jobs SET next_run=:next WHERE id=:id AND state='AVAILABLE' AND work=:work",
+                    next=time.time() + 300,
+                    id=job["id"],
+                    work=job["work"],
+                )
+                log.warning(
+                    json.dumps(
+                        {
+                            "event": "library_reconciliation_failed",
+                            "job": job["id"],
+                            "type": type(exc).__name__,
+                        }
+                    )
+                )
+
     def retry(self, job, reason, minimum=60):
         attempts = self.db.job(job["id"])["attempts"] + 1
         state = "FAILED" if attempts >= self.settings.max_attempts else "RETRY_SCHEDULED"
@@ -78,6 +105,7 @@ class Worker:
         library_coverage = set()
         if self.settings.jellyfin_key.get_secret_value() or not (job["dry_run"] or self.settings.dry_run):
             library_coverage = Jellyfin(self.settings).coverage(work)
+            self.db.record_coverage(job["id"], library_coverage)
             wanted = {"movie"} if work.kind == "movie" else set(work.episodes)
             if wanted and wanted.issubset(library_coverage):
                 self.db.transition(
@@ -94,8 +122,18 @@ class Worker:
         ):
             covered.update((row["episode"] or "").split("+"))
         covered.discard("")
+        if (
+            work.kind == "series"
+            and covered - library_coverage
+            and self.settings.jellyfin_key.get_secret_value()
+        ):
+            self.db.transition(job["id"], "NEEDS_REVIEW", "IMPORTED_EPISODES_MISSING_FROM_LIBRARY")
+            return
         covered.update(library_coverage)
         if work.kind == "series":
+            if not work.episodes:
+                self.db.transition(job["id"], "WAITING_FOR_RELEASE", "NO_EPISODES_IN_METADATA", delay=3600)
+                return
             work = work.model_copy(update={"episodes": sorted(set(work.episodes) - covered)})
             if not work.episodes:
                 self.db.transition(job["id"], "AVAILABLE", reserved=0)
@@ -266,14 +304,11 @@ class Worker:
         published_keys = {key for _, _, keys in paths for key in keys} if work.kind == "series" else {"movie"}
         Jellyfin(self.settings).refresh()
         library_coverage = Jellyfin(self.settings).coverage(work)
+        self.db.record_coverage(job["id"], library_coverage)
         if not published_keys.issubset(library_coverage):
             self.db.transition(job["id"], "IMPORTING", "WAITING_FOR_JELLYFIN", delay=60)
             return
         covered = set(library_coverage)
-        for row in self.db.execute(
-            "SELECT episode FROM imports WHERE job_id=:id AND state='PUBLISHED'", id=job["id"]
-        ):
-            covered.update((row["episode"] or "").split("+"))
         if work.kind == "series" and not set(work.episodes).issubset(covered):
             self.db.transition(
                 job["id"],

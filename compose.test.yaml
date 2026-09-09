@@ -58,6 +58,8 @@ services:
     entrypoint: [python, /tests/live_qbit.py]
     volumes:
       - ./tests:/tests:ro
+      - ./mae:/app/mae:ro
+      - ./migrations:/app/migrations:ro
       - ./e2e-data/leecher:/data/store
       - ./e2e-data/seed:/seed
     tmpfs: [/state, /tmp]
