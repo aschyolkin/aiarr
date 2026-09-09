@@ -8,7 +8,12 @@ class HTTP:
 
 def test_alexfilm_catalog_is_read_only_metadata():
     entry = AlexFilmCatalog(HTTP()).entries()[0]
-    assert (entry.studio, entry.title, entry.url, entry.synopsis) == ("AlexFilm", "Example", "https://alexfilm.tv/serialy/x/", "Synopsis")
+    assert (entry.studio, entry.title, entry.url, entry.synopsis) == (
+        "AlexFilm",
+        "Example",
+        "https://alexfilm.tv/serialy/x/",
+        "Synopsis",
+    )
 
 
 def test_flarrow_catalog_is_read_only_metadata():
@@ -17,7 +22,12 @@ def test_flarrow_catalog_is_read_only_metadata():
             return b'<div><a href="https://fla-fi.studio/serial/x/">Example</a><div class="short-desc"><div class="sd-line">Dubbed</div></div></div>'
 
     entry = FlarrowCatalog(FlarrowHTTP()).entries()[0]
-    assert (entry.studio, entry.title, entry.url, entry.synopsis) == ("Flarrow Films", "Example", "https://fla-fi.studio/serial/x/", "Dubbed")
+    assert (entry.studio, entry.title, entry.url, entry.synopsis) == (
+        "Flarrow Films",
+        "Example",
+        "https://fla-fi.studio/serial/x/",
+        "Dubbed",
+    )
 
 
 def test_lostfilm_catalog_is_read_only_metadata():
@@ -26,7 +36,12 @@ def test_lostfilm_catalog_is_read_only_metadata():
             return b'<a class="text-block" href="/series/Example"><div class="title-ru">Example RU</div><div class="title-en">Example EN</div></a>'
 
     entry = LostFilmCatalog(LostHTTP()).entries()[0]
-    assert (entry.studio, entry.title, entry.url, entry.synopsis) == ("LostFilm", "Example RU", "https://www.lostfilm.tv/series/Example", "Example EN")
+    assert (entry.studio, entry.title, entry.url, entry.synopsis) == (
+        "LostFilm",
+        "Example RU",
+        "https://www.lostfilm.tv/series/Example",
+        "Example EN",
+    )
 
 
 def test_lostfilm_catalog_search_excludes_movies():
@@ -43,4 +58,23 @@ def test_red_head_sound_catalog_is_read_only_metadata():
             return b'<div class="move-item"><div class="move-item__content"><h4><a href="https://redheadsound.studio/video/example">Example</a></h4></div></div>'
 
     entry = RedHeadSoundCatalog(RHSHTTP()).entries()[0]
-    assert (entry.studio, entry.title, entry.url) == ("Red Head Sound", "Example", "https://redheadsound.studio/video/example")
+    assert (entry.studio, entry.title, entry.url) == (
+        "Red Head Sound",
+        "Example",
+        "https://redheadsound.studio/video/example",
+    )
+
+
+def test_catalog_rejects_external_and_non_https_links():
+    class UnsafeHTTP:
+        def get(self, url):
+            return b"""<article class="elementor-post"><h3 class="elementor-post__title">
+                <a href="javascript:alert(1)">Script</a></h3></article>
+                <article class="elementor-post"><h3 class="elementor-post__title">
+                <a href="https://other.example/release">External</a></h3></article>
+                <article class="elementor-post"><h3 class="elementor-post__title">
+                <a href="/serialy/safe/">Safe</a></h3></article>"""
+
+    assert [(entry.title, entry.url) for entry in AlexFilmCatalog(UnsafeHTTP()).entries()] == [
+        ("Safe", "https://alexfilm.tv/serialy/safe/")
+    ]

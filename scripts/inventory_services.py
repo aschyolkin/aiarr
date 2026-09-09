@@ -4,8 +4,8 @@ Uses configured service API keys only locally, does not read external app DBs.
 """
 import json
 import sys
-import urllib.parse
 import urllib.error
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from pathlib import Path

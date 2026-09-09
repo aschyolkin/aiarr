@@ -1,6 +1,7 @@
 """Read-only public studio catalogs; deliberately separate from download providers."""
+
 from dataclasses import dataclass
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
@@ -22,6 +23,14 @@ class StudioCatalog:
     def entries(self):
         raise NotImplementedError
 
+    def entry_url(self, href):
+        """Keep catalog links on the studio's HTTPS origin."""
+        url = urljoin(self.base_url, href)
+        parsed, base = urlsplit(url), urlsplit(self.base_url)
+        if parsed.scheme != "https" or parsed.hostname != base.hostname:
+            return None
+        return url
+
 
 class AlexFilmCatalog(StudioCatalog):
     def __init__(self, http):
@@ -32,11 +41,21 @@ class AlexFilmCatalog(StudioCatalog):
         result = []
         for title in soup.select(".elementor-post__title a[href]"):
             text = clean_text(title.get_text(" ", strip=True))
-            if text:
+            url = self.entry_url(title["href"])
+            if text and url:
                 excerpt = title.find_parent("article") or title.find_parent(
                     class_=lambda value: value and "elementor-post" in value
                 )
-                result.append(CatalogEntry(self.studio, text, title["href"], clean_text(str(excerpt.select_one(".elementor-post__excerpt"))) if excerpt and excerpt.select_one(".elementor-post__excerpt") else ""))
+                result.append(
+                    CatalogEntry(
+                        self.studio,
+                        text,
+                        url,
+                        clean_text(str(excerpt.select_one(".elementor-post__excerpt")))
+                        if excerpt and excerpt.select_one(".elementor-post__excerpt")
+                        else "",
+                    )
+                )
         return result
 
 
@@ -51,8 +70,9 @@ class FlarrowCatalog(StudioCatalog):
             parent = card.parent
             link = parent.select_one("a[href]") if parent else None
             title = clean_text(link.get_text(" ", strip=True)) if link else ""
-            if title:
-                result.append(CatalogEntry(self.studio, title, link["href"], clean_text(str(card))))
+            url = self.entry_url(link["href"]) if link else None
+            if title and url:
+                result.append(CatalogEntry(self.studio, title, url, clean_text(str(card))))
         return result
 
 
@@ -64,19 +84,41 @@ class LostFilmCatalog(StudioCatalog):
         soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
         result = []
         for card in soup.select('a.text-block[href^="/series/"]'):
-            title = clean_text(card.select_one(".title-ru").get_text(" ", strip=True)) if card.select_one(".title-ru") else ""
-            if title:
-                result.append(CatalogEntry(self.studio, title, self.base_url.rstrip("/") + card["href"], clean_text(card.select_one(".title-en").get_text(" ", strip=True)) if card.select_one(".title-en") else ""))
+            title = (
+                clean_text(card.select_one(".title-ru").get_text(" ", strip=True))
+                if card.select_one(".title-ru")
+                else ""
+            )
+            url = self.entry_url(card["href"])
+            if title and url:
+                result.append(
+                    CatalogEntry(
+                        self.studio,
+                        title,
+                        url,
+                        clean_text(card.select_one(".title-en").get_text(" ", strip=True))
+                        if card.select_one(".title-en")
+                        else "",
+                    )
+                )
         return result
 
     def search(self, query):
-        soup = BeautifulSoup(self.http.get(self.base_url + "search/?q=" + quote(query)).decode("utf-8", "strict"), "html.parser")
+        soup = BeautifulSoup(
+            self.http.get(self.base_url + "search/?q=" + quote(query)).decode("utf-8", "strict"),
+            "html.parser",
+        )
         result = []
         for link in soup.select('.row-search a.no-decoration[href^="/series/"]'):
             ru, en = link.select_one(".name-ru"), link.select_one(".name-en")
             title = clean_text(ru.get_text(" ", strip=True)) if ru else ""
-            if title:
-                result.append(CatalogEntry(self.studio, title, self.base_url.rstrip("/") + link["href"], clean_text(en.get_text(" ", strip=True)) if en else ""))
+            url = self.entry_url(link["href"])
+            if title and url:
+                result.append(
+                    CatalogEntry(
+                        self.studio, title, url, clean_text(en.get_text(" ", strip=True)) if en else ""
+                    )
+                )
         return result
 
 
@@ -91,6 +133,7 @@ class RedHeadSoundCatalog(StudioCatalog):
             link = card.select_one(".move-item__content h4 a[href]")
             if link:
                 title = clean_text(link.get_text(" ", strip=True))
-                if title:
-                    result.append(CatalogEntry(self.studio, title, link["href"], ""))
+                url = self.entry_url(link["href"])
+                if title and url:
+                    result.append(CatalogEntry(self.studio, title, url, ""))
         return result
