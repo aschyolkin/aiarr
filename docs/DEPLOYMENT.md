@@ -17,9 +17,11 @@ rollback.
 The `aiarr` TrueNAS Custom App is installed from local image
 `media-acquisition-engine:0.1.0`, with `MAE_DRY_RUN=true`, the anonymous
 `nnmclub` provider, and no Seerr/qBittorrent/Jellyfin credentials. Its API is bound only to
-`127.0.0.1:30280`; the API mounts media read-only. Internal authenticated
-health returned HTTP 200 and Docker reported `healthy`. No new files appeared
-under the download directories during this check.
+`10.110.111.2:30280`; the API mounts media read-only. Internal authenticated
+health returned HTTP 200 and Docker reported `healthy`. A request from the
+Seerr container reached the API and received the expected unauthenticated HTTP
+401, proving the container-to-NAS route without exposing an API key. No new
+files appeared under the download directories during this check.
 An in-container UID 3000 probe created and removed two temporary files under
 `downloads/films` and `films`; equal `st_dev`/inode and `nlink=2` confirmed
 that this actual dataset boundary supports hardlinks.
