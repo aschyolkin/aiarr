@@ -1,0 +1,69 @@
+# TrueNAS 25.10 Custom App compose template.
+# Replace only MAE_API_KEY with a random >=24-character value. Keep this file
+# secret-free; add service credentials only after the dry-run acceptance gate.
+services:
+  migrate:
+    image: media-acquisition-engine:0.1.0
+    user: "3000:3000"
+    command: [migrate]
+    environment: &mae_env
+      MAE_API_KEY: REPLACE_WITH_A_RANDOM_SECRET
+      MAE_DRY_RUN: "true"
+      MAE_PROVIDERS: "[]"
+      MAE_STATE_DIR: /state
+    volumes:
+      - /mnt/data/apps/mae-state:/state
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 1g
+    pids_limit: 128
+    restart: "no"
+
+  api:
+    image: media-acquisition-engine:0.1.0
+    user: "3000:3000"
+    command: [api]
+    environment: *mae_env
+    volumes:
+      - /mnt/data/apps/mae-state:/state
+      - /mnt/data/store:/data/store:ro
+    ports: ["127.0.0.1:30280:8080"]
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 1g
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, urllib.request; request = urllib.request.Request('http://127.0.0.1:8080/health', headers={'X-Api-Key': os.environ['MAE_API_KEY']}); urllib.request.urlopen(request, timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  worker:
+    image: media-acquisition-engine:0.1.0
+    user: "3000:3000"
+    command: [worker]
+    environment: *mae_env
+    volumes:
+      - /mnt/data/apps/mae-state:/state
+      - /mnt/data/store:/data/store
+    read_only: true
+    tmpfs: ["/tmp:size=64m,mode=1777"]
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    cpus: 2
+    mem_limit: 1g
+    pids_limit: 128
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully

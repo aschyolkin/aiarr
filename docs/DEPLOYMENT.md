@@ -4,6 +4,27 @@ Experimental build. Read ACCEPTANCE.md before any production switch.
 TrueNAS detected 25.10.7; its [Custom App documentation](https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/installcustomappscreens/)
 supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 
+## Recorded isolated deployment — 2026-09-09
+
+TrueNAS 25.10.7 was inventoried before deployment. `/mnt/data/store` is the
+single media dataset and has the required `downloads/films`,
+`downloads/serials`, `films`, and `serials` paths. A pre-change snapshot
+`data/apps@pre-mae-20260909` was created, followed by the dedicated state
+dataset `/mnt/data/apps/mae-state` (UID/GID 3000, mode `0700`).
+
+The `mae` TrueNAS Custom App is installed from local image
+`media-acquisition-engine:0.1.0`, with `MAE_DRY_RUN=true`, no providers and no
+Seerr/qBittorrent/Jellyfin credentials. Its API is bound only to
+`127.0.0.1:30280`; the API mounts media read-only. Internal authenticated
+health returned HTTP 200 and Docker reported `healthy`. No new files appeared
+under the download directories during this check.
+
+Radarr and Sonarr were deliberately left running and Seerr was not reconfigured,
+so no second automation owns a request or download. Use
+`deploy/truenas-custom-app.compose.yaml.example` as the secret-free Custom App
+template. Do not add integration credentials or disable dry-run until a separate
+cutover step has been accepted.
+
 Local development:
 
 ```
