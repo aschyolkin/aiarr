@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import time
 from urllib.parse import urljoin
 
@@ -229,5 +230,50 @@ class NNMClubProvider:
             raise ProviderError(Outcome.TEMPORARY_FAILURE) from None
 
 
+class RutorProvider(NNMClubProvider):
+    """Anonymous Rutor search; cards/file lists use the verified Rutor enricher."""
+
+    def __init__(self, config, http=None):
+        super().__init__(config, http)
+        self.enricher = RutorDetailsEnricher(config, self.http)
+
+    def capabilities(self):
+        return {"search", "details", "file_list", "download"}
+
+    def search(self, query):
+        raw = self._get(f"/search/0/0/000/0/{query.title}")
+        try:
+            soup = BeautifulSoup(raw.decode("utf-8", errors="strict"), "html.parser")
+        except UnicodeError:
+            raise ProviderError(Outcome.PARSER_BROKEN) from None
+        rows = []
+        for row in soup.select("#index tr.gai, #index tr.tum")[:100]:
+            detail = row.select_one('a[href^="/torrent/"]')
+            magnet = row.select_one('a[href^="magnet:"]')
+            cells = row.find_all("td", recursive=False)
+            if not detail or not magnet or len(cells) < 4:
+                continue
+            title = clean_text(detail.get_text(" ", strip=True))
+            if not title:
+                continue
+            url = urljoin(self.config.url, detail["href"])
+            rid = hashlib.sha256(url.encode()).hexdigest()
+            size_text = cells[-2].get_text(" ", strip=True).replace(" ", "")
+            match = re.fullmatch(r"([0-9.]+)(KB|MB|GB|TB)", size_text, re.I)
+            multipliers = {"KB": 1024, "MB": 1024**2, "GB": 1024**3, "TB": 1024**4}
+            size = int(float(match[1]) * multipliers[match[2].upper()]) if match else None
+            self.handles[rid] = DownloadHandle(url=magnet["href"])
+            rows.append(SearchResult(provider=self.config.name, release_id=rid, title=title, size=size, details_url=url))
+        if not rows and soup.select_one("#index") is None:
+            raise ProviderError(Outcome.PARSER_BROKEN)
+        return rows
+
+    def fetch_details(self, release):
+        return self.enricher.fetch_details(release)
+
+    def fetch_file_list(self, release):
+        return self.enricher.fetch_file_list(release)
+
+
 def make_provider(config):
-    return {"torznab": TorznabProvider, "json": JSONProvider, "nnmclub": NNMClubProvider}[config.protocol](config)
+    return {"torznab": TorznabProvider, "json": JSONProvider, "nnmclub": NNMClubProvider, "rutor": RutorProvider}[config.protocol](config)
