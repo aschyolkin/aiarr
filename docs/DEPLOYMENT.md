@@ -58,6 +58,13 @@ Seerr's Radarr/Sonarr services, adding a download, importing media, or changing
 legacy automation ownership. The next cutover step remains an explicit Seerr
 facade configuration and a carefully scoped request-routing decision.
 
+After this ingestion check, Seerr's official non-persistent connection-test
+endpoints validated both aiarr facades: `/api/v1/settings/radarr/test` and
+`/api/v1/settings/sonarr/test` each returned HTTP 200 with the configured
+quality profile. The test payload was constructed locally from the existing
+aiarr API key and was not saved as a Seerr service. No default service, request
+route, Radarr/Sonarr setting, or Seerr record was changed.
+
 Local development:
 
 ```
