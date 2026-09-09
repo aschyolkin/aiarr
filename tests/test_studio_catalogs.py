@@ -1,3 +1,6 @@
+import pytest
+
+from mae.domain import Outcome, ProviderError
 from mae.studio_catalogs import AlexFilmCatalog, FlarrowCatalog, LostFilmCatalog, RedHeadSoundCatalog
 
 
@@ -7,13 +10,20 @@ class HTTP:
 
 
 def test_alexfilm_catalog_is_read_only_metadata():
-    entry = AlexFilmCatalog(HTTP()).entries()[0]
+    catalog = AlexFilmCatalog(HTTP())
+    entry = catalog.entries()[0]
     assert (entry.studio, entry.title, entry.url, entry.synopsis) == (
         "AlexFilm",
         "Example",
         "https://alexfilm.tv/serialy/x/",
         "Synopsis",
     )
+    assert catalog.healthcheck() == {"status": "OK", "capabilities": ["catalog"], "entries": 1}
+    assert catalog.authentication_status() == {"source": "anonymous", "mode": "catalog_only"}
+    assert not hasattr(catalog, "resolve_download")
+    with pytest.raises(ProviderError) as exc:
+        catalog.search("Example")
+    assert exc.value.outcome == Outcome.UNSUPPORTED_CAPABILITY
 
 
 def test_flarrow_catalog_is_read_only_metadata():

@@ -5,6 +5,7 @@ from urllib.parse import quote, urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
+from mae.domain import Outcome, ProviderError
 from mae.security import clean_text
 
 
@@ -22,6 +23,18 @@ class StudioCatalog:
 
     def entries(self):
         raise NotImplementedError
+
+    def capabilities(self):
+        return {"catalog"}
+
+    def authentication_status(self):
+        return {"source": "anonymous", "mode": "catalog_only"}
+
+    def healthcheck(self):
+        return {"status": "OK", "capabilities": sorted(self.capabilities()), "entries": len(self.entries())}
+
+    def search(self, query):
+        raise ProviderError(Outcome.UNSUPPORTED_CAPABILITY)
 
     def entry_url(self, href):
         """Keep catalog links on the studio's HTTPS origin."""
