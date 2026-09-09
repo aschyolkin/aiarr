@@ -117,6 +117,12 @@ def main():
         lambda: downloader.info(torrent_hash) and downloader.info(torrent_hash)["progress"] == 1,
         "swarm transfer incomplete",
     )
+    assert downloader.pause(torrent_hash)
+    wait_until(
+        lambda: downloader.info(torrent_hash)
+        and str(downloader.info(torrent_hash)["state"]).lower().startswith("stopped"),
+        "owned torrent was not paused",
+    )
     downloaded = root / "downloads/films" / media.name
     assert downloaded.read_bytes() == content
     data = verify(probe(downloaded, root), settings.policy)
@@ -133,7 +139,7 @@ def main():
                 "bytes": size,
                 "hardlink_count": target.stat().st_nlink,
                 "audio_tag": data["streams"][1]["tags"]["language"],
-                "scope": "real isolated swarm, probe, hardlink; not full Seerr/Jellyfin E2E",
+                "scope": "real isolated swarm, owned-torrent pause, probe, hardlink; not full Seerr/Jellyfin E2E",
             }
         ),
         flush=True,
