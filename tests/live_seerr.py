@@ -48,7 +48,7 @@ def engine_process(seerr_url, seerr_key, overrides=None):
         process.wait(timeout=15)
 
 
-def main(acquire_fixture=False, extend_season=False):
+def main(acquire_fixture=False, extend_season=False, lifecycle=False):
     for suffix in ("films", "serials", "downloads/films", "downloads/serials"):
         (Path("/data/store") / suffix).mkdir(parents=True, exist_ok=True)
     seerr_url = f"http://{socket.gethostbyname('seerr')}:5055"
@@ -95,6 +95,8 @@ def main(acquire_fixture=False, extend_season=False):
             jobs = exercise_requests(seerr, engine_host, engine_url, dry_run=not acquire_fixture)
             if extend_season:
                 exercise_season_extension(seerr, engine_url, jobs)
+            if lifecycle:
+                exercise_cancellation_rerequest(seerr, engine_url, jobs)
             if fixture:
                 fixture.finish(env, engine_url, jobs)
 
@@ -244,5 +246,49 @@ def exercise_season_extension(seerr, engine_url, jobs):
         raise AssertionError("Seerr did not extend existing series with selected season 3")
 
 
+def exercise_cancellation_rerequest(seerr, engine_url, jobs):
+    """Uses only the disposable Seerr config/database in compose.test.yaml."""
+    movie = next(job for job in jobs if json.loads(job["work"])["kind"] == "movie")
+    requests = seerr.get("/api/v1/request", params={"take": 100})
+    requests.raise_for_status()
+    original = next(row for row in requests.json()["results"] if row["type"] == "movie")
+    with httpx.Client(
+        base_url=engine_url,
+        timeout=30,
+        trust_env=False,
+        headers={"X-Api-Key": "isolated-engine-key-000000000000"},
+    ) as engine:
+        engine.post(f"/admin/jobs/{movie['id']}/cancel").raise_for_status()
+        deleted = seerr.delete(f"/api/v1/request/{original['id']}")
+        deleted.raise_for_status()
+        # No row is deliberately not an inferred cancellation or re-request.
+        engine.post("/events/seerr", json={}).raise_for_status()
+        assert engine.get(f"/admin/jobs/{movie['id']}").json()["state"] == "CANCELLED"
+        recreated = seerr.post("/api/v1/request", json={"mediaType": "movie", "mediaId": 10378, "is4k": False})
+        recreated.raise_for_status()
+        assert recreated.json()["id"] != original["id"]
+        for _ in range(30):
+            engine.post("/events/seerr", json={}).raise_for_status()
+            job = engine.get(f"/admin/jobs/{movie['id']}").json()
+            if job["state"] == "REQUESTED" and job["generation"] == 2:
+                print(
+                    json.dumps(
+                        {
+                            "result": "PASS",
+                            "scope": "real Seerr delete + re-request and engine generation recovery",
+                            "generation": job["generation"],
+                        }
+                    ),
+                    flush=True,
+                )
+                return
+            time.sleep(1)
+    raise AssertionError("Seerr re-request did not open generation 2")
+
+
 if __name__ == "__main__":
-    main(acquire_fixture="--acquire-fixture" in sys.argv, extend_season="--extend-season" in sys.argv)
+    main(
+        acquire_fixture="--acquire-fixture" in sys.argv,
+        extend_season="--extend-season" in sys.argv,
+        lifecycle="--lifecycle" in sys.argv,
+    )

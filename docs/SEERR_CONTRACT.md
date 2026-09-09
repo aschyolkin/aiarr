@@ -54,6 +54,12 @@ Setup requires Jellyfin `urlBase: ""`, `serverType: 2`; Sonarr settings require
 `enableSeasonFolders`. `MainSettings.apiKey` is read-only: fetch it through the
 authenticated API and pass it to the temporary engine process in memory.
 
+`--lifecycle` is an opt-in disposable-stack test for the Seerr operation that is
+available to an administrator: delete an approved request, then create a new one.
+It verifies the engine's admin cancellation remains cancelled across the missing
+old request and the new Seerr request opens generation 2. It never targets a
+production Seerr instance.
+
 Limitations: individual episode unmonitoring and full metadata lookup contract are
 not accepted yet. Cancellation/re-request has offline coverage but still requires
 a live Seerr cancellation/re-request observation.

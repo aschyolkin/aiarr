@@ -81,6 +81,8 @@ docker compose -f compose.test.yaml --profile full up -d seed leecher jellyfin s
 docker compose -f compose.test.yaml run --rm test
 docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_jellyfin.py
 docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py
+# Optional: disposable Seerr request deletion + re-request lifecycle check
+docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py --lifecycle
 docker compose -f compose.test.yaml --profile full down
 ```
 
