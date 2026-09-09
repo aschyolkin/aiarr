@@ -27,3 +27,11 @@ def test_lostfilm_catalog_is_read_only_metadata():
 
     entry = LostFilmCatalog(LostHTTP()).entries()[0]
     assert (entry.studio, entry.title, entry.url, entry.synopsis) == ("LostFilm", "Example RU", "https://www.lostfilm.tv/series/Example", "Example EN")
+
+
+def test_lostfilm_catalog_search_excludes_movies():
+    class LostHTTP:
+        def get(self, url):
+            return b'<div class="row-search"><a class="no-decoration" href="/series/Example"><div class="name-ru">Example RU</div><div class="name-en">Example EN</div></a></div><div class="row-search"><a class="no-decoration" href="/movies/Other"><div class="name-ru">Film</div></a></div>'
+
+    assert LostFilmCatalog(LostHTTP()).search("Example")[0].url == "https://www.lostfilm.tv/series/Example"

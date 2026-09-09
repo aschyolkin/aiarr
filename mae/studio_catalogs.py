@@ -1,5 +1,6 @@
 """Read-only public studio catalogs; deliberately separate from download providers."""
 from dataclasses import dataclass
+from urllib.parse import quote
 
 from bs4 import BeautifulSoup
 
@@ -66,4 +67,14 @@ class LostFilmCatalog(StudioCatalog):
             title = clean_text(card.select_one(".title-ru").get_text(" ", strip=True)) if card.select_one(".title-ru") else ""
             if title:
                 result.append(CatalogEntry(self.studio, title, self.base_url.rstrip("/") + card["href"], clean_text(card.select_one(".title-en").get_text(" ", strip=True)) if card.select_one(".title-en") else ""))
+        return result
+
+    def search(self, query):
+        soup = BeautifulSoup(self.http.get(self.base_url + "search/?q=" + quote(query)).decode("utf-8", "strict"), "html.parser")
+        result = []
+        for link in soup.select('.row-search a.no-decoration[href^="/series/"]'):
+            ru, en = link.select_one(".name-ru"), link.select_one(".name-en")
+            title = clean_text(ru.get_text(" ", strip=True)) if ru else ""
+            if title:
+                result.append(CatalogEntry(self.studio, title, self.base_url.rstrip("/") + link["href"], clean_text(en.get_text(" ", strip=True)) if en else ""))
         return result
