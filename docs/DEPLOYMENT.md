@@ -18,6 +18,9 @@ Seerr/qBittorrent/Jellyfin credentials. Its API is bound only to
 `127.0.0.1:30280`; the API mounts media read-only. Internal authenticated
 health returned HTTP 200 and Docker reported `healthy`. No new files appeared
 under the download directories during this check.
+An in-container UID 3000 probe created and removed two temporary files under
+`downloads/films` and `films`; equal `st_dev`/inode and `nlink=2` confirmed
+that this actual dataset boundary supports hardlinks.
 
 Radarr and Sonarr were deliberately left running and Seerr was not reconfigured,
 so no second automation owns a request or download. Use
