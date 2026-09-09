@@ -47,6 +47,22 @@ access, file verification, LG playback and recovery tests pass. Do not let old a
 new automation own the same requests. Stop Radarr/Sonarr only at successful
 cutover; retain their app datasets, config and credentials for rollback.
 
+## Public source adapters
+
+The direct `rutor` and `nnmclub` adapters are optional and use no account
+credentials. Copy their commented `MAE_PROVIDERS` example from `.env.example`
+only after a dry-run check. `rutor` is pinned to the configured HTTPS
+`source_host`; `nnmclub` is pinned to `https://nnmclub.to`. A network mirror or
+proxy is not selected automatically. When this TrueNAS intentionally resolves an
+external source through a local Fake-IP proxy, `trusted_source: true` is a
+per-source, explicit exception after the exact route is tested; it must never be
+used as a general SSRF bypass.
+
+Do not add source cookies, passkeys, or site passwords to `.env` for these two
+anonymous adapters. A live catalog/search success is not permission to download:
+leave `MAE_DRY_RUN=true` until the source, qBittorrent and import policy are
+separately accepted.
+
 Rollback: stop engine API/worker, restore the previous Seerr service configuration,
 restart former Radarr/Sonarr. Retain category `mae` torrents for explicit review;
 do not reassign/delete them automatically. Engine imports are hardlinks and must
