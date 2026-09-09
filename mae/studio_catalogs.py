@@ -53,3 +53,17 @@ class FlarrowCatalog(StudioCatalog):
             if title:
                 result.append(CatalogEntry(self.studio, title, link["href"], clean_text(str(card))))
         return result
+
+
+class LostFilmCatalog(StudioCatalog):
+    def __init__(self, http):
+        super().__init__("LostFilm", "https://www.lostfilm.tv/", http)
+
+    def entries(self):
+        soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
+        result = []
+        for card in soup.select('a.text-block[href^="/series/"]'):
+            title = clean_text(card.select_one(".title-ru").get_text(" ", strip=True)) if card.select_one(".title-ru") else ""
+            if title:
+                result.append(CatalogEntry(self.studio, title, self.base_url.rstrip("/") + card["href"], clean_text(card.select_one(".title-en").get_text(" ", strip=True)) if card.select_one(".title-en") else ""))
+        return result
