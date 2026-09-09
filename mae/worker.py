@@ -288,11 +288,6 @@ class Worker:
             relative = safe_relative(file["name"])
             if relative.suffix.lower() not in {".mkv", ".mp4", ".m4v", ".avi", ".ts"}:
                 continue
-            source = Path(info["save_path"]) / relative
-            if not source.is_relative_to(self.settings.store / "downloads"):
-                raise ValueError("DOWNLOAD_OUTSIDE_MANAGED_PATH")
-            expected = json.loads(job["candidate"])["parsed"] if job["candidate"] else None
-            data = verify(probe(source, self.settings.store), self.settings.policy, expected)
             keys = episode_keys(guessit(str(relative))) if work.kind == "series" else []
             if work.kind == "series":
                 if not keys:
@@ -301,6 +296,11 @@ class Worker:
                     continue
                 if not set(keys).issubset(work.episodes):
                     raise ValueError("FILE_COVERS_UNMONITORED_EPISODE")
+            source = Path(info["save_path"]) / relative
+            if not source.is_relative_to(self.settings.store / "downloads"):
+                raise ValueError("DOWNLOAD_OUTSIDE_MANAGED_PATH")
+            expected = json.loads(job["candidate"])["parsed"] if job["candidate"] else None
+            data = verify(probe(source, self.settings.store), self.settings.policy, expected)
             paths.append((source, data, keys))
         if not paths or (work.kind == "movie" and len(paths) != 1):
             raise ValueError("AMBIGUOUS_MEDIA_FILES")

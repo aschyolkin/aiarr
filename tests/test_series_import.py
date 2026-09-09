@@ -87,6 +87,27 @@ def test_partial_import_and_disappeared_episode_never_complete_season(db, series
     downloader.add.assert_not_called()
 
 
+def test_unmonitored_separate_pack_file_is_not_imported(db, series_env):
+    settings, downloader, work, folder, route = series_env
+    job_id = db.submit(work, False)
+    ignored = db.execute("SELECT id FROM episodes WHERE job_id=:id AND episode='S01E02'", id=job_id)[0]["id"]
+    db.set_episode_monitoring([ignored], False)
+    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
+    downloader.files.return_value = [{"name": path.name} for path in sorted(folder.glob("*.mkv"))]
+    route.mock(
+        return_value=httpx.Response(
+            200,
+            json={"Items": [{"Path": "/data/store/serials/e1.mkv", "ParentIndexNumber": 1, "IndexNumber": 1}]},
+        )
+    )
+
+    Worker(settings, db, [], downloader).tick()
+
+    imports = db.execute("SELECT episode FROM imports WHERE job_id=:id", id=job_id)
+    assert [row["episode"] for row in imports] == ["S01E01"]
+    assert db.job(job_id)["state"] == "AVAILABLE"
+
+
 def test_every_episode_probed_before_publishing_pack(db, series_env):
     settings, downloader, work, folder, _ = series_env
     job_id = db.submit(work, False)
