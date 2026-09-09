@@ -1,4 +1,4 @@
-from mae.studio_catalogs import AlexFilmCatalog, FlarrowCatalog, LostFilmCatalog
+from mae.studio_catalogs import AlexFilmCatalog, FlarrowCatalog, LostFilmCatalog, RedHeadSoundCatalog
 
 
 class HTTP:
@@ -35,3 +35,12 @@ def test_lostfilm_catalog_search_excludes_movies():
             return b'<div class="row-search"><a class="no-decoration" href="/series/Example"><div class="name-ru">Example RU</div><div class="name-en">Example EN</div></a></div><div class="row-search"><a class="no-decoration" href="/movies/Other"><div class="name-ru">Film</div></a></div>'
 
     assert LostFilmCatalog(LostHTTP()).search("Example")[0].url == "https://www.lostfilm.tv/series/Example"
+
+
+def test_red_head_sound_catalog_is_read_only_metadata():
+    class RHSHTTP:
+        def get(self, url):
+            return b'<div class="move-item"><div class="move-item__content"><h4><a href="https://redheadsound.studio/video/example">Example</a></h4></div></div>'
+
+    entry = RedHeadSoundCatalog(RHSHTTP()).entries()[0]
+    assert (entry.studio, entry.title, entry.url) == ("Red Head Sound", "Example", "https://redheadsound.studio/video/example")

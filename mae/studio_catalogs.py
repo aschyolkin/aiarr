@@ -78,3 +78,19 @@ class LostFilmCatalog(StudioCatalog):
             if title:
                 result.append(CatalogEntry(self.studio, title, self.base_url.rstrip("/") + link["href"], clean_text(en.get_text(" ", strip=True)) if en else ""))
         return result
+
+
+class RedHeadSoundCatalog(StudioCatalog):
+    def __init__(self, http):
+        super().__init__("Red Head Sound", "https://redheadsound.studio/", http)
+
+    def entries(self):
+        soup = BeautifulSoup(self.http.get(self.base_url).decode("utf-8", "strict"), "html.parser")
+        result = []
+        for card in soup.select(".move-item"):
+            link = card.select_one(".move-item__content h4 a[href]")
+            if link:
+                title = clean_text(link.get_text(" ", strip=True))
+                if title:
+                    result.append(CatalogEntry(self.studio, title, link["href"], ""))
+        return result
