@@ -266,13 +266,13 @@ def exercise_cancellation_rerequest(seerr, engine_url, jobs):
         deleted.raise_for_status()
         # No row is deliberately not an inferred cancellation or re-request.
         engine.post("/events/seerr", json={}).raise_for_status()
-        assert engine.get(f"/admin/jobs/{movie['id']}").json()["state"] == "CANCELLED"
+        assert engine.get(f"/admin/jobs/{movie['id']}").json()["job"]["state"] == "CANCELLED"
         recreated = seerr.post("/api/v1/request", json={"mediaType": "movie", "mediaId": 10378, "is4k": False})
         recreated.raise_for_status()
         assert recreated.json()["id"] != original["id"]
         for _ in range(30):
             engine.post("/events/seerr", json={}).raise_for_status()
-            job = engine.get(f"/admin/jobs/{movie['id']}").json()
+            job = engine.get(f"/admin/jobs/{movie['id']}").json()["job"]
             if job["state"] == "REQUESTED" and job["generation"] == 2:
                 print(
                     json.dumps(
