@@ -60,9 +60,23 @@ def test_nnmclub_anonymous_search_card_and_handle():
         },
         {
             "protocol": "rutor",
+            "url": "https://mirror.example",
+            "source_host": "mirror.example",
+            "details_adapter": "rutor",
+        },
+        {
+            "protocol": "rutor",
             "url": "https://rutor.info",
             "source_host": "rutor.info",
         },
+        {
+            "protocol": "rutor",
+            "url": "https://rutor.info/?mirror=1",
+            "source_host": "rutor.info",
+            "details_adapter": "rutor",
+        },
+        {"protocol": "nnmclub", "url": "https://nnmclub.to/forum/"},
+        {"protocol": "nnmclub", "url": "https://nnmclub.to/#fragment"},
     ],
 )
 def test_special_provider_rejects_unverified_mirrors_and_mismatched_origins(config):

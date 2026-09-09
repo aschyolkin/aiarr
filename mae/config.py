@@ -8,6 +8,19 @@ from pydantic import BaseModel, Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
+def _is_exact_https_origin(parsed, host):
+    return (
+        parsed.scheme == "https"
+        and parsed.hostname == host
+        and parsed.port in (None, 443)
+        and parsed.path in ("", "/")
+        and not parsed.query
+        and not parsed.fragment
+        and not parsed.username
+        and not parsed.password
+    )
+
+
 class ProviderConfig(BaseModel):
     name: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,39}$")
     protocol: Literal["torznab", "json", "nnmclub", "rutor"] = "torznab"
@@ -48,14 +61,13 @@ class ProviderConfig(BaseModel):
         parsed = urlsplit(self.url)
         if self.protocol == "rutor":
             if (
-                parsed.scheme != "https"
-                or not self.source_host
-                or parsed.hostname != self.source_host
+                not _is_exact_https_origin(parsed, "rutor.info")
+                or self.source_host != "rutor.info"
                 or self.details_adapter != "rutor"
             ):
                 raise ValueError("rutor requires its exact HTTPS source_host and rutor details adapter")
         if self.protocol == "nnmclub" and (
-            parsed.scheme != "https" or parsed.hostname != "nnmclub.to" or self.source_host
+            not _is_exact_https_origin(parsed, "nnmclub.to") or self.source_host
         ):
             raise ValueError("nnmclub requires the exact HTTPS nnmclub.to origin")
         return self
