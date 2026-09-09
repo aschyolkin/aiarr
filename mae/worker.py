@@ -164,9 +164,11 @@ class Worker:
         self.db.transition(job["id"], "SEARCHING")
         selected = None
         decisions, errors = [], []
+        searched_any = False
         for provider in self.providers:
             try:
                 results = provider.search(work)
+                searched_any = True
                 for index, release in enumerate(results[:100]):
                     # Expand beyond the initial sample only while no proven match exists.
                     if selected and index >= self.settings.enrichment_limit:
@@ -209,7 +211,11 @@ class Worker:
             state = "NEEDS_REVIEW" if any(c["unknown"] for c in decisions) else "WAITING_FOR_RELEASE"
             if errors and not decisions:
                 if not any(e["outcome"] in {"AUTH_REQUIRED", "ACCESS_DENIED"} for e in errors):
-                    self.retry(job, "PROVIDER_SEARCH_FAILED", max(e["retry_after"] for e in errors))
+                    # A search result page can be valid while a later release
+                    # card fetch fails. Preserve that distinction for retries
+                    # and source diagnostics.
+                    reason = "PROVIDER_ENRICHMENT_FAILED" if searched_any else "PROVIDER_SEARCH_FAILED"
+                    self.retry(job, reason, max(e["retry_after"] for e in errors))
                     return
                 state = "AUTH_REQUIRED"
             self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
