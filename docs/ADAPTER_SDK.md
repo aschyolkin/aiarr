@@ -24,6 +24,11 @@ redirects and caps decompressed response bytes. Gateway private-network access
 requires exact configured origin. Automatic redirect handling is deliberately
 unsupported until an explicit allowlist implementation is tested.
 
+Site-specific adapters may be stricter: the built-in anonymous `rutor` adapter
+requires the exact configured HTTPS `source_host` and its card adapter; `nnmclub`
+requires `https://nnmclub.to`. A mirror needs an explicit, tested adapter change;
+it is not a configuration-only fallback.
+
 Some operator networks intentionally resolve an external source to a Fake-IP for
 their own proxy. Set `trusted_source: true` only for that exact configured HTTPS
 `source_host`. This is an explicit operator trust boundary: it permits that one

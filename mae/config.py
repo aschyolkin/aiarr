@@ -1,6 +1,7 @@
 import codecs
 from pathlib import Path
 from typing import Literal
+from urllib.parse import urlsplit
 
 from bs4 import BeautifulSoup
 from pydantic import BaseModel, Field, SecretStr, model_validator
@@ -44,6 +45,19 @@ class ProviderConfig(BaseModel):
                 BeautifulSoup("", "html.parser").select(self.details_selector)
             except Exception:
                 raise ValueError("Invalid details_selector") from None
+        parsed = urlsplit(self.url)
+        if self.protocol == "rutor":
+            if (
+                parsed.scheme != "https"
+                or not self.source_host
+                or parsed.hostname != self.source_host
+                or self.details_adapter != "rutor"
+            ):
+                raise ValueError("rutor requires its exact HTTPS source_host and rutor details adapter")
+        if self.protocol == "nnmclub" and (
+            parsed.scheme != "https" or parsed.hostname != "nnmclub.to" or self.source_host
+        ):
+            raise ValueError("nnmclub requires the exact HTTPS nnmclub.to origin")
         return self
 
 

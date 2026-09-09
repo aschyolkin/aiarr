@@ -1,4 +1,4 @@
-# Source support matrix — 2026-09-08
+# Source support matrix — 2026-09-09
 
 Protocol implementation is not live site certification. No source cookies or
 private fixtures have been imported. No random mirrors selected.
@@ -6,9 +6,9 @@ private fixtures have been imported. No random mirrors selected.
 | Source/address | Integration | Auth | Verified | Remaining limitation |
 |---|---|---|---|---|
 | RuTracker https://rutracker.org/ | Torznab + Jackett `RuTracker.cs`; optional separately configured card enricher | Account/captcha in gateway; card cookie separate | Upstream implementation audit, protocol fixtures | No account live search/download/card/file-list test |
-| Rutor https://rutor.info/ | Direct anonymous `rutor` search → magnet + concrete card/files adapter; Torznab optional | Public | 2026-09-09 NAS-host search HTTP 200 / 5 results; topic `384544` and file list fetched; fixtures pass | Docker bridge source request still needs explicitly configured source route/gateway. No torrent/magnet was downloaded |
+| Rutor https://rutor.info/ | Direct anonymous `rutor` search → magnet + concrete card/files adapter; Torznab optional | Public | 2026-09-09 NAS-host search HTTP 200 / 5 results; topic `384544` and file list fetched; fixtures pass | Adapter accepts only its exact HTTPS origin; Docker bridge source request still needs explicitly configured source route/gateway. No torrent/magnet was downloaded |
 | Kinozal https://kinozal.tv/ | Torznab + `kinozal.yml` | Account | Login/settings implementation inspected | Disable `addrussian`; card auth/live download not tested |
-| NNM-Club https://nnmclub.to/ | Concrete anonymous `nnmclub` search/card/download-handle adapter; Torznab remains optional | Anonymous search/card where site permits | 2026-09-09: live search `Big Buck Bunny` returned 5 results; Windows-1251 parser fixture passes | Card request returned `TEMPORARY_FAILURE` twice from this network; no `download.php` request was made. Live card/download still outstanding |
+| NNM-Club https://nnmclub.to/ | Concrete anonymous `nnmclub` search/card/download-handle adapter; Torznab remains optional | Anonymous search/card where site permits | 2026-09-09: live search `Big Buck Bunny` returned 5 results; Windows-1251 parser fixture passes | Adapter accepts only `https://nnmclub.to`; card request returned `TEMPORARY_FAILURE` twice from this network; no `download.php` request was made. Live card/download still outstanding |
 | LostFilm https://www.lostfilm.tv/ | `LostFilmCatalog` read-only public series catalog and `/search/`; Torznab optional | Login/captcha for account-specific operations | 2026-09-09 public home HTTP 200 (23 cards); public search returned «Во все тяжкие / Breaking Bad»; fixtures pass | Numbering/quality/download are not implemented or verified; catalog is not a download provider |
 | NewStudio https://newstudio.tv/ | Torznab + `newstudio.yml` | Definition public; IP restrictions | Search/download selectors inspected | TLS connection timed out twice on this network; upstream IP-filtering warning remains; no live claim |
 | AlexFilm https://alexfilm.tv/ | `studio_matching_only` + read-only `AlexFilmCatalog` | Site offers Google/Yandex login | Public catalog fetched 2026-09-09; saved live page parsed into 9 entries; fixtures pass | No download interface verified; catalog is never a download provider |
