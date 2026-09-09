@@ -8,7 +8,7 @@ STUDIOS = {
     "LostFilm": r"\blost[ ._-]?film\b",
     "NewStudio": r"\bnew[ ._-]?studio\b",
     "AlexFilm": r"\balex[ ._-]?film\b",
-    "Red Head Sound": r"\bred[ ._-]?head[ ._-]?sound\b|\bRHS\b",
+    "Red Head Sound": r"\bred[ ._-]?head[ ._-]?sound\b|\bR\.?H\.?S\.?\b|РХС",
     "Flarrow Films": r"\bflarrow[ ._-]?films?\b",
 }
 

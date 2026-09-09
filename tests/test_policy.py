@@ -51,6 +51,14 @@ def test_studios_equal_default_weight(studio, movie):
     assert c.score["studio"] == 0
 
 
+@pytest.mark.parametrize("alias", ["R.H.S.", "РХС"])
+def test_rhs_audio_aliases_are_context_scoped(alias, movie):
+    c = evaluate(candidate("Аудио: русский " + alias), movie, Policy())
+    assert any(claim.field == "studio" and claim.value == "Red Head Sound" for claim in c.claims)
+    title_only = evaluate(candidate(alias), movie, Policy())
+    assert not any(claim.field == "studio" for claim in title_only.claims)
+
+
 @pytest.mark.parametrize(
     "title,reason",
     [
