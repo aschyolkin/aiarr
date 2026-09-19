@@ -1,3 +1,4 @@
+import json
 import time
 from unittest.mock import Mock
 
@@ -5,7 +6,7 @@ import httpx
 
 from mae.config import ProviderConfig
 from mae.db import Database
-from mae.domain import Outcome, ProviderError
+from mae.domain import Outcome, ProviderError, SearchResult
 from mae.providers import TorznabProvider
 from mae.worker import Worker
 
@@ -54,4 +55,37 @@ def test_source_errors_have_bounded_retries_and_retry_after(settings, db, movie)
     Worker(settings, db, [provider], downloader).tick()
     assert db.job(job_id)["state"] == "FAILED"
     assert db.job(job_id)["attempts"] == 2
+    downloader.add.assert_not_called()
+
+
+def test_empty_provider_does_not_misclassify_other_search_failure(settings, db, movie):
+    empty, broken = Mock(), Mock()
+    empty.config.name = "empty"
+    empty.search.return_value = []
+    broken.config.name = "broken"
+    broken.search.side_effect = ProviderError(Outcome.TEMPORARY_FAILURE)
+    job_id = db.submit(movie)
+    downloader = Mock()
+    Worker(settings, db, [empty, broken], downloader).tick()
+    job = db.job(job_id)
+    assert job["reason"] == "PROVIDER_SEARCH_FAILED"
+    error = json.loads(job["decision"])["errors"][0]
+    assert error["provider"] == "broken" and error["stage"] == "SEARCHING"
+    downloader.add.assert_not_called()
+
+
+def test_card_failure_preserves_stage_and_outcome(settings, db, movie):
+    provider = Mock()
+    provider.config.name = "fixture"
+    provider.search.return_value = [SearchResult(
+        provider="fixture", release_id="one", title="Example.2024.1080p.WEB-DL.H.264"
+    )]
+    provider.fetch_details.side_effect = ProviderError(Outcome.PARSER_BROKEN)
+    job_id = db.submit(movie)
+    downloader = Mock()
+    Worker(settings, db, [provider], downloader).tick()
+    job = db.job(job_id)
+    assert job["reason"] == "PROVIDER_ENRICHMENT_FAILED"
+    error = json.loads(job["decision"])["errors"][0]
+    assert error["stage"] == "ENRICHING" and error["outcome"] == "PARSER_BROKEN"
     downloader.add.assert_not_called()
