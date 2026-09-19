@@ -177,7 +177,8 @@ class NNMClubProvider:
         if delay > 0:
             time.sleep(delay)
         self.last_request = time.monotonic()
-        return self.http.get(urljoin(self.config.url, path), params=params)
+        # httpx treats params={} as replacing the URL query, dropping topic IDs.
+        return self.http.get(urljoin(self.config.url, path), params=params or None)
 
     def search(self, query):
         raw = self._get("/forum/tracker.php", nm=query.title)

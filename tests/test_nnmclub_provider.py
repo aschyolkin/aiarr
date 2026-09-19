@@ -1,8 +1,10 @@
+import httpx
 import pytest
 
 from mae.config import ProviderConfig
 from mae.domain import Work
 from mae.providers import NNMClubProvider
+from mae.security import SafeHTTP
 
 
 class HTTP:
@@ -11,6 +13,21 @@ class HTTP:
 
     def get(self, url, **kwargs):
         return self.pages[url]
+
+
+def test_topic_query_survives_real_http_client(respx_mock):
+    config = ProviderConfig(name="nnm", protocol="nnmclub", url="https://nnmclub.to", interval=0)
+    provider = NNMClubProvider(config, SafeHTTP("https://nnmclub.to"))
+    respx_mock.get("https://nnmclub.to/forum/tracker.php", params={"nm": "Example"}).respond(
+        200, text='<a></a><table><tr><td><a class="topictitle" href="viewtopic.php?t=42">Example</a>'
+        '<a href="download.php?id=7">DL</a></td></tr></table>'
+    )
+    card = respx_mock.get("https://nnmclub.to/forum/viewtopic.php?t=42").mock(
+        return_value=httpx.Response(200, content='<div class="post_body">Аудио: Русский</div>'.encode("cp1251"))
+    )
+    release = provider.search(Work(kind="movie", external_id=1, title="Example"))[0]
+    assert "Русский" in provider.fetch_details(release).evidence[0].text
+    assert card.called
 
 
 def test_nnmclub_anonymous_search_card_and_handle():
