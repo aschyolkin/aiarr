@@ -2,6 +2,34 @@
 
 ## Resumed verification — 2026-09-20
 
+### Latest continuation: DeepSeek and TV preparation
+
+Deployed runtime is now `media-acquisition-engine:d442e18`, image digest
+`sha256:0de6ee703cee332c2f6c655cbe798e03bbd05f6220f2ed5f842e92e1d3cc4d08`.
+API and worker were verified running that tag. Config and consistent SQLite
+backup: `/mnt/data/apps/aiarr-pre-d442e18-jp9b0ju4` (private).
+The key supplied by the operator is installed; official DeepSeek smoke now
+**passes** with one call and verified cache reuse. Initial live failures were
+caused by missing enum instructions in the prompt and were fixed in `e3a2f40`.
+The hard-rejected-candidate review fix is also now deployed. Dry-run stays true.
+
+Full offline suite including television fixture safety tests: **186 passed**,
+Ruff clean. Read-only Jellyfin session diagnostics are available with
+`python -m mae.playback`; missing sessions or fields are not playback success.
+Live inventory found Jellyfin 10.11.11, 58 existing items (SDR only), no active
+sessions. Synthetic 4K generation exceeded the production worker's 1 GiB limit;
+fixture generation was moved to a disposable 3 GiB / 2 CPU container. Existing
+media was not modified. Television observation remains outstanding.
+
+TV preparation subsequently passed: all four original synthetic SDR/HDR10
+fixtures were fully decoded and discovered by exact path in the separate
+`AIARR TV Tests` Jellyfin library. Generator returned `READY_FOR_TV`; temporary
+3 GiB / 2 CPU container was removed automatically. See PLAYBACK_PROFILE.md for
+the device checklist and limitations (no DV/surround/network certification).
+This reaches the requested physical-TV test stage, not full project acceptance.
+
+The entries below are earlier checkpoints, not current deployment/key status.
+
 Current offline checkout: **171 passed**, Ruff clean (two upstream deprecation
 warnings). Commit `3c60dc2` prevents unknown fields on already hard-rejected
 candidates from unnecessarily triggering manual review; this runtime change is
