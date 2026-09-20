@@ -27,10 +27,12 @@ from mae.downloads import torrent_metadata
 
 
 class Fixture:
-    def __init__(self, raw, content, filename, jellyfin_url, jellyfin_key):
+    def __init__(self, raw, content, filename, jellyfin_url, jellyfin_key, kind="movie"):
         self.raw = raw
         self.content = content
         self.filename = filename
+        self.kind = kind
+        self.expected_files = 13 if kind == "series" else 1
         self.hash, _, _ = torrent_metadata(raw)
         self.seed_ip = socket.gethostbyname("seed")
         self.leecher = qbittorrentapi.Client(
@@ -59,9 +61,10 @@ class Fixture:
         self.resolutions = 0
 
     def finish(self, env, engine_url, jobs):
-        movie = next(j for j in jobs if json.loads(j["work"])["kind"] == "movie")
+        movie = next(j for j in jobs if json.loads(j["work"])["kind"] == self.kind)
         assert not self.leecher.torrents_info(torrent_hashes=self.hash), "Torrent must be new"
-        assert not (Path("/data/store/downloads/films") / self.filename).exists(), "Use fresh fixture media"
+        folder = "serials" if self.kind == "series" else "films"
+        assert not (Path("/data/store/downloads") / folder / self.filename).exists(), "Use fresh fixture media"
         worker = subprocess.Popen(["/app/.venv/bin/mae", "worker"], env=env)
         restarted = False
         states = []
@@ -95,30 +98,42 @@ class Fixture:
                         restarted = True
                     if job["state"] == "AVAILABLE":
                         assert restarted and job["torrent_hash"] == self.hash
-                        assert len(detail["imports"]) == 1
-                        imported = detail["imports"][0]
-                        assert imported["state"] == "PUBLISHED"
-                        source, destination = Path(imported["source"]), Path(imported["destination"])
-                        assert source.read_bytes() == self.content
-                        assert os.path.samefile(source, destination) and source.stat().st_nlink == 2
+                        assert len(detail["imports"]) == self.expected_files
+                        for imported in detail["imports"]:
+                            assert imported["state"] == "PUBLISHED"
+                            source, destination = Path(imported["source"]), Path(imported["destination"])
+                            assert source.read_bytes() == self.content
+                            assert os.path.samefile(source, destination) and source.stat().st_nlink == 2
+                        if self.kind == "series":
+                            assert {i["episode"] for i in detail["imports"]} == {
+                                f"S02E{n:02d}" for n in range(1, 14)
+                            }
                         assert self.searches >= 1 and self.resolutions == 1
                         for _ in range(2):
                             api.post("/events/seerr", json={}).raise_for_status()
                         assert len(api.get("/admin/jobs").json()) == 2
                         assert len(self.leecher.torrents_info(torrent_hashes=self.hash)) == 1
-                        rendered = api.get(f"/radarr/api/v3/movie/{movie['id']}")
+                        path = (
+                            f"/sonarr/api/v3/episode?seriesId={movie['id']}"
+                            if self.kind == "series" else f"/radarr/api/v3/movie/{movie['id']}"
+                        )
+                        rendered = api.get(path)
                         rendered.raise_for_status()
-                        assert rendered.json()["hasFile"] is True
+                        if self.kind == "series":
+                            assert len(rendered.json()) == 13
+                            assert all(e["hasFile"] for e in rendered.json())
+                        else:
+                            assert rendered.json()["hasFile"] is True
                         print(
                             json.dumps(
                                 {
                                     "result": "PASS",
-                                    "scope": "synthetic Seerr movie -> JSON provider -> worker -> qBittorrent -> probe -> hardlink -> Jellyfin",
+                                    "scope": f"synthetic Seerr {self.kind} -> JSON provider -> worker -> qBittorrent -> probe -> hardlink -> Jellyfin",
                                     "worker_sigkill_recovery": True,
-                                    "bytes": len(self.content),
-                                    "imports": 1,
+                                    "bytes": len(self.content) * self.expected_files,
+                                    "imports": self.expected_files,
                                     "states": states,
-                                    "limitations": "synthetic identity/audio tags; no tracker or TV playback certification; series acquisition not tested",
+                                    "limitations": "synthetic identity/audio tags; no tracker or TV playback certification",
                                 }
                             ),
                             flush=True,
@@ -133,10 +148,12 @@ class Fixture:
 
 
 @contextmanager
-def acquisition_fixture(localized_title):
-    seed_dir = Path("/seed/downloads/films")
-    filename = "Big.Buck.Bunny.2008.1080p.WEB-DL.H264.mkv"
-    media = seed_dir / filename
+def acquisition_fixture(localized_title, kind="movie"):
+    folder = "serials" if kind == "series" else "films"
+    seed_dir = Path("/seed/downloads") / folder
+    seed_dir.mkdir(parents=True, exist_ok=True)
+    filename = "Breaking.Bad.S02.1080p.WEB-DL.H264" if kind == "series" else "Big.Buck.Bunny.2008.1080p.WEB-DL.H264.mkv"
+    media = seed_dir / (filename + ".synthetic-source.mkv" if kind == "series" else filename)
     if media.exists():
         raise AssertionError("Use a fresh E2E staging directory; never overwrite a seeded file")
     subprocess.run(
@@ -168,14 +185,26 @@ def acquisition_fixture(localized_title):
         timeout=40,
     )
     content = media.read_bytes()
+    torrent_content = content
+    info = {b"length": len(content), b"name": filename.encode()}
+    if kind == "series":
+        pack = seed_dir / filename
+        pack.mkdir()  # Refuse to overwrite a previous fixture or seeded directory.
+        files = []
+        for number in range(1, 14):
+            name = f"Breaking.Bad.S02E{number:02d}.1080p.WEB-DL.H264.mkv"
+            (pack / name).write_bytes(content)
+            files.append({b"length": len(content), b"path": [name.encode()]})
+        info = {b"name": filename.encode(), b"files": files}
+        torrent_content = content * 13
     raw = bencodepy.encode(
         {
             b"info": {
-                b"length": len(content),
-                b"name": filename.encode(),
+                **info,
                 b"piece length": 16384,
                 b"pieces": b"".join(
-                    hashlib.sha1(content[i : i + 16384]).digest() for i in range(0, len(content), 16384)
+                    hashlib.sha1(torrent_content[i : i + 16384]).digest()
+                    for i in range(0, len(torrent_content), 16384)
                 ),
             }
         }
@@ -190,12 +219,20 @@ def acquisition_fixture(localized_title):
             },
         )
         login.raise_for_status()
-        fixture = Fixture(raw, content, filename, jellyfin_url, login.json()["AccessToken"])
+        fixture = Fixture(raw, content, filename, jellyfin_url, login.json()["AccessToken"], kind)
+        if kind == "series":
+            jellyfin.headers["X-Emby-Token"] = login.json()["AccessToken"]
+            jellyfin.post('/Library/VirtualFolders', params={
+                'name':'MAE Test Series', 'collectionType':'tvshows',
+                'paths':'/data/store/serials', 'refreshLibrary':'true',
+            }, json={'LibraryOptions':{'EnableRealtimeMonitor':False,'TypeOptions':[
+                {'Type':t,'MetadataFetchers':[],'ImageFetchers':[]} for t in ['Series','Season','Episode']
+            ]}}).raise_for_status()
     seed = qbittorrentapi.Client(
         host=f"http://{fixture.seed_ip}:8080", SIMPLE_RESPONSES=True, REQUESTS_ARGS={"timeout": 5}
     )
     seed.torrents_add(
-        torrent_files=raw, save_path="/data/store/downloads/films", use_auto_torrent_management=False
+        torrent_files=raw, save_path="/data/store/downloads/" + folder, use_auto_torrent_management=False
     )
     wait_until(
         lambda: (
@@ -225,16 +262,16 @@ def acquisition_fixture(localized_title):
                     [
                         {
                             "release": {
-                                "release_id": "synthetic-movie-1",
+                                "release_id": "synthetic-" + fixture.kind + "-1",
                                 "title": filename,
-                                "size": len(content),
+                                "size": len(torrent_content),
                                 "seeders": 1,
                             },
                             "description": "Audio: Russian, AAC stereo.\nSynthetic silence with rus tag; no speech recognition.",
                             "download": "http://127.0.0.1:8765/fixture.torrent",
                         }
                     ]
-                    if "bunny" in query or query == localized_title.casefold()
+                    if query == localized_title.casefold()
                     else []
                 )
                 body, kind = json.dumps({"results": rows}).encode(), "application/json"

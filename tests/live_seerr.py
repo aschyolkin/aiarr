@@ -48,7 +48,8 @@ def engine_process(seerr_url, seerr_key, overrides=None):
         process.wait(timeout=15)
 
 
-def main(acquire_fixture=False, extend_season=False, lifecycle=False):
+def main(acquire_fixture=False, extend_season=False, lifecycle=False, acquire_series=False):
+    assert not (acquire_fixture and acquire_series), "Choose one fixture acquisition per fresh stack"
     for suffix in ("films", "serials", "downloads/films", "downloads/serials"):
         (Path("/data/store") / suffix).mkdir(parents=True, exist_ok=True)
     seerr_url = f"http://{socket.gethostbyname('seerr')}:5055"
@@ -83,19 +84,23 @@ def main(acquire_fixture=False, extend_season=False, lifecycle=False):
         main_settings.raise_for_status()
         with ExitStack() as stack:
             fixture = None
-            if acquire_fixture:
+            if acquire_fixture or acquire_series:
                 from live_worker_e2e import acquisition_fixture
 
-                metadata = seerr.get("/api/v1/movie/10378")
+                metadata = seerr.get("/api/v1/tv/1396" if acquire_series else "/api/v1/movie/10378")
                 metadata.raise_for_status()
-                assert metadata.json().get("originalTitle") == "Big Buck Bunny"
-                fixture = stack.enter_context(acquisition_fixture(metadata.json()["title"]))
+                if acquire_series:
+                    assert metadata.json().get("originalName") == "Breaking Bad"
+                    fixture = stack.enter_context(acquisition_fixture(metadata.json()["name"], "series"))
+                else:
+                    assert metadata.json().get("originalTitle") == "Big Buck Bunny"
+                    fixture = stack.enter_context(acquisition_fixture(metadata.json()["title"]))
             env = stack.enter_context(
                 engine_process(
                     seerr_url, main_settings.json()["apiKey"], fixture.overrides if fixture else None
                 )
             )
-            jobs = exercise_requests(seerr, engine_host, engine_url, dry_run=not acquire_fixture)
+            jobs = exercise_requests(seerr, engine_host, engine_url, dry_run=fixture is None)
             if extend_season:
                 exercise_season_extension(seerr, engine_url, jobs)
             if lifecycle:
@@ -294,4 +299,5 @@ if __name__ == "__main__":
         acquire_fixture="--acquire-fixture" in sys.argv,
         extend_season="--extend-season" in sys.argv,
         lifecycle="--lifecycle" in sys.argv,
+        acquire_series="--acquire-series-fixture" in sys.argv,
     )

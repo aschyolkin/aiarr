@@ -21,3 +21,9 @@ worker, not in Git or logs. Default budget is 20 calls/day; failures also count.
 Offline client tests verify the new request contract, caching, redaction,
 bounded retries, and rejection of alternate model IDs. Live smoke testing
 requires a real key and must be reported separately; it has not yet passed.
+
+Run the explicit smoke check from the project root with the private key already
+configured: `uv run python tests/live_deepseek.py --run-live`. It sends only
+synthetic technical evidence, uses disposable SQLite state, validates grounded
+Russian-audio extraction and cache reuse, and prints no tokens/credentials.
+Exit 2 means missing key, not success; at most two billed calls are permitted.
