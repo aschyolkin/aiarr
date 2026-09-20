@@ -209,7 +209,13 @@ class Worker:
         )
         self.db.transition(job["id"], "SELECTED" if selected else "WAITING_FOR_RELEASE", decision=decision)
         if not selected:
-            state = "NEEDS_REVIEW" if any(c["unknown"] for c in decisions) else "WAITING_FOR_RELEASE"
+            # Unknown properties of already rejected releases cannot turn a
+            # wrong movie/season or forbidden source into a review candidate.
+            state = (
+                "NEEDS_REVIEW"
+                if any(c["unknown"] and not c["reasons"] for c in decisions)
+                else "WAITING_FOR_RELEASE"
+            )
             if errors and not decisions:
                 if not any(e["outcome"] in {"AUTH_REQUIRED", "ACCESS_DENIED"} for e in errors):
                     # A search result page can be valid while a later release

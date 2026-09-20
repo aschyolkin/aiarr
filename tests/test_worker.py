@@ -6,7 +6,7 @@ import httpx
 
 from mae.config import ProviderConfig
 from mae.db import Database
-from mae.domain import Outcome, ProviderError, SearchResult
+from mae.domain import Outcome, ProviderError, ReleaseDetails, SearchResult
 from mae.providers import TorznabProvider
 from mae.worker import Worker
 
@@ -88,4 +88,32 @@ def test_card_failure_preserves_stage_and_outcome(settings, db, movie):
     assert job["reason"] == "PROVIDER_ENRICHMENT_FAILED"
     error = json.loads(job["decision"])["errors"][0]
     assert error["stage"] == "ENRICHING" and error["outcome"] == "PARSER_BROKEN"
+    downloader.add.assert_not_called()
+
+
+def test_wrong_identity_unknown_fields_do_not_require_manual_review(settings, db, movie):
+    provider = Mock()
+    provider.config.name = 'fixture'
+    provider.search.return_value = [SearchResult(
+        provider='fixture',release_id='wrong',title='Unrelated.2024.1080p.WEB-DL.H264'
+    )]
+    job_id = db.submit(movie)
+    downloader = Mock()
+    Worker(settings,db,[provider],downloader).tick()
+    assert db.job(job_id)['state'] == 'WAITING_FOR_RELEASE'
+    provider.fetch_details.assert_not_called()
+    downloader.add.assert_not_called()
+
+
+def test_matching_unknown_audio_still_requires_review(settings, db, movie):
+    provider = Mock()
+    provider.config.name = 'fixture'
+    provider.search.return_value = [SearchResult(
+        provider='fixture',release_id='match',title='Example.2024.1080p.WEB-DL.H264',size=1000
+    )]
+    provider.fetch_details.return_value = ReleaseDetails()
+    job_id = db.submit(movie)
+    downloader = Mock()
+    Worker(settings,db,[provider],downloader).tick()
+    assert db.job(job_id)['state'] == 'NEEDS_REVIEW'
     downloader.add.assert_not_called()
