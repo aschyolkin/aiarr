@@ -1,3 +1,5 @@
+import base64
+import hashlib
 import json
 import secrets
 import shutil
@@ -6,6 +8,7 @@ import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from mae.admin import ADMIN_HTML
 from mae.config import Settings
 from mae.db import Database
 from mae.domain import Work
@@ -18,6 +21,8 @@ def create_app(settings=None, db=None, seerr=None):
     seerr = seerr or Seerr(settings)
 
     def authenticate(request: Request):
+        if request.method == "GET" and request.url.path == "/admin":
+            return  # Login shell only; all data and actions remain authenticated.
         supplied = request.headers.get("X-Api-Key") or request.query_params.get("apikey") or ""
         if not secrets.compare_digest(supplied, settings.api_key.get_secret_value()):
             raise HTTPException(401, "API key required")
@@ -51,14 +56,17 @@ def create_app(settings=None, db=None, seerr=None):
 
     @app.get("/admin", response_class=HTMLResponse)
     def admin():
-        return """<!doctype html><meta charset="utf-8"><title>Media Acquisition Engine</title>
-        <h1>Media Acquisition Engine</h1><p>Administrative diagnostics</p>
-        <input id="key" type="password" placeholder="API key"><button id="load">Refresh</button>
-        <pre id="output"></pre><script>
-        document.getElementById('load').onclick=async()=>{
-          const r=await fetch('/admin/jobs',{headers:{'X-Api-Key':document.getElementById('key').value}});
-          document.getElementById('output').textContent=JSON.stringify(await r.json(),null,2);
-        };</script>"""
+        script = ADMIN_HTML.split("<script>", 1)[1].split("</script>", 1)[0]
+        digest = base64.b64encode(hashlib.sha256(script.encode()).digest()).decode()
+        return HTMLResponse(ADMIN_HTML, headers={
+            "Cache-Control": "no-store",
+            "Referrer-Policy": "no-referrer",
+            "X-Content-Type-Options": "nosniff",
+            "Content-Security-Policy": (
+                "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; "
+                f"script-src 'sha256-{digest}'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+            ),
+        })
 
     @app.get("/admin/jobs")
     def jobs():
