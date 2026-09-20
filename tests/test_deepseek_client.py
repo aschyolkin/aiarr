@@ -4,7 +4,7 @@ import pytest
 from pydantic import SecretStr, ValidationError
 
 from mae.config import Settings
-from mae.deepseek import DeepSeek
+from mae.deepseek import CLAIM_VALUES, DeepSeek
 from mae.domain import Evidence
 
 
@@ -24,6 +24,7 @@ def test_flash_request_cache_and_no_secret_evidence(settings, db, respx_mock):
     assert request['thinking'] == {'type':'disabled'}
     assert request['response_format'] == {'type':'json_object'}
     assert 'tools' not in request
+    assert json.dumps(CLAIM_VALUES) in request['messages'][0]['content']
     assert 'private-value' not in route.calls[0].request.content.decode()
     assert db.execute('SELECT SUM(tokens) n FROM llm_usage')[0]['n'] == 27
 
@@ -42,6 +43,22 @@ def test_call_budget_prevents_network(settings, db, respx_mock):
     settings.deepseek_daily_calls = 0
     assert DeepSeek(settings,db).interpret([]) is None
     assert not respx_mock.calls
+
+
+def test_rejected_semantic_response_still_counts_tokens(settings, db, respx_mock):
+    settings.deepseek_key = SecretStr('test-secret-not-real')
+    respx_mock.post('https://api.deepseek.com/chat/completions').respond(200, json={
+        'choices': [{'message': {'content': json.dumps({
+            'claims': [{'field': 'audio_language', 'value': 'Russian',
+                        'evidence_id': 'one', 'quote': 'Audio: Russian'}],
+            'unknown': [], 'contradictions': [],
+        })}}],
+        'usage': {'total_tokens': 42},
+    })
+    assert DeepSeek(settings, db).interpret([
+        Evidence(id='one', text='Audio: Russian', method='fixture')
+    ]) is None
+    assert db.execute('SELECT SUM(tokens) n FROM llm_usage')[0]['n'] == 84
 
 
 @pytest.mark.parametrize('model',['deepseek-v4-flash','deepseek-v4-pro','another-provider'])
