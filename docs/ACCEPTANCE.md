@@ -1,5 +1,33 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Resumed verification — 2026-09-20
+
+- Offline: 152 tests passed; Ruff passed. Commits `0076a81`, `2d63d4b`,
+  `2b023ae` add per-source failure stages, retain topic query parameters, and
+  parse NNMClub's current first-post markup without including replies.
+- Live NNMClub root causes confirmed: passing `params={}` stripped `?t=...`
+  and caused HTTP 404; current pages use `.postbody`, not `.post_body`.
+  Four real cards from two requests now yield nonempty cleaned evidence.
+  Both production dry-run jobs evaluated (50 / 3 candidates) with no source
+  errors and entered NEEDS_REVIEW. Missing mandatory fields remain explicit;
+  no production torrent was added.
+- Isolated full movie E2E rerun passed: real Seerr movie and selected season
+  (13 episodes), synthetic 2,647,201-byte local torrent, actual worker SIGKILL
+  recovery, verification, one hardlink import, exact-ID Jellyfin discovery,
+  AVAILABLE, no duplicate torrent/import. Series acquisition and TV playback
+  are not certified by this movie fixture.
+- Deployed image `media-acquisition-engine:2b023ae`; both running containers
+  verified as `sha256:127a637309fccbf73e432988d8bd1bb2cc743e0d05c1f5de494c56a3204b2c94`.
+  Dry-run remains enabled. Config and SQLite backup:
+  `/mnt/data/apps/aiarr-pre-2b023ae-6j7d6t6l` (private root-owned directory).
+- Production Seerr now has saved aiarr Radarr/Sonarr services, each ID 1,
+  non-default, scan disabled, automatic search disabled. Existing services
+  were compared before/after and remain unchanged. This is staged integration,
+  not cutover. Seerr settings backup:
+  `/mnt/data/apps/aiarr-seerr-before-facades-8ddimygs`.
+- DeepSeek key is absent in the deployed configuration; live smoke test remains
+  blocked on a key. All older observations below are historical checkpoints.
+
 **Not accepted as a complete implementation of the specification. Do not switch
 production Radarr/Sonarr yet.** This report separates code from tested behavior.
 

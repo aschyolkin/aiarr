@@ -1,6 +1,12 @@
 # Deployment and rollback
 
 Experimental build. Read ACCEPTANCE.md before any production switch.
+
+Latest checkpoint (2026-09-20): aiarr runs `media-acquisition-engine:2b023ae`
+with dry-run enabled. See the dated ACCEPTANCE update for the verified image
+ID and backups. Seerr has saved non-default aiarr services for movies/series
+with scans and automatic search disabled; legacy defaults are unchanged.
+The historical deployment sections below predate this staged integration.
 TrueNAS detected 25.10.7; its [Custom App documentation](https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/installcustomappscreens/)
 supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 

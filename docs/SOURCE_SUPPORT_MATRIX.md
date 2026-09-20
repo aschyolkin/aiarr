@@ -3,6 +3,13 @@
 Protocol implementation is not live site certification. No source cookies or
 private fixtures have been imported. No random mirrors selected.
 
+2026-09-20 update for NNMClub: fixed topic-query loss (`params={}` in httpx)
+and current `.postbody` markup. Four anonymous live cards passed through the
+actual adapter in the production worker network. Production dry-run searches
+evaluated 50 and 3 candidates without source errors. Size/audio completeness
+still requires work; no torrent payload or source download was requested.
+The older TEMPORARY_FAILURE observations below preceded these fixes.
+
 | Source/address | Integration | Auth | Verified | Remaining limitation |
 |---|---|---|---|---|
 | RuTracker https://rutracker.org/ | Torznab + Jackett `RuTracker.cs`; optional separately configured card enricher | Account/captcha in gateway; card cookie separate | Upstream implementation audit, protocol fixtures | No account live search/download/card/file-list test |
