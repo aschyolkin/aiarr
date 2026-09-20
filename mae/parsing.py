@@ -37,7 +37,10 @@ def parse_candidate(release, details):
             if re.match(r"(?i)^\s*(Text|Video|General|Menu|Субтитры|Видео)(?:\s*#?\d+)?\s*$", line):
                 audio_block = False
             direct_audio = bool(
-                re.match(r"(?i)^\s*(аудио(?:дорожка)?|audio(?: track)?|звук)\s*\d*\s*[:：]", line)
+                re.match(
+                    r"(?i)^\s*(аудио(?:дорожка)?|audio(?: track)?|звук|язык\s+(?:озвучки|аудио))"
+                    r"\s*\d*\s*[:：]", line
+                )
             )
             audio_language = audio_block and bool(re.match(r"(?i)^\s*(language|язык)\s*:", line))
             if not (direct_audio or audio_language):

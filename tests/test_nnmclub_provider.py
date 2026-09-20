@@ -58,6 +58,19 @@ def test_malformed_breaks_preserve_audio_evidence():
     assert any(c.field == "audio_language" and c.value == "rus" for c in candidate.claims)
 
 
+@pytest.mark.parametrize("label,expected", [
+    ("Язык озвучки",True),("Язык аудио",True),("Язык субтитров",False),("Язык",False)
+])
+def test_explicit_audio_language_labels(label, expected):
+    from mae.domain import Evidence, ReleaseDetails, SearchResult
+    from mae.parsing import parse_candidate
+    candidate = parse_candidate(
+        SearchResult(provider="nnm",release_id="42",title="Example.2024.1080p.WEB-DL.H264"),
+        ReleaseDetails(evidence=[Evidence(id="card",text=label+": Русский",method="fixture")]),
+    )
+    assert any(c.field == "audio_language" and c.value == "rus" for c in candidate.claims) is expected
+
+
 @pytest.mark.parametrize("seed_text,expected", [("0",0),("27",27),("—",None)])
 def test_nnm_exact_bytes_and_unknown_seeders(seed_text, expected):
     config = ProviderConfig(name="nnm",protocol="nnmclub",url="https://nnmclub.to")
