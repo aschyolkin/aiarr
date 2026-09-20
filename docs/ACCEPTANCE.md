@@ -2,6 +2,29 @@
 
 ## Resumed verification — 2026-09-20
 
+Latest deployed runtime: `media-acquisition-engine:3eec8fe`, verified running
+image `sha256:2d84fba41db76ad997910d6bae99217069378ccc972981b1efbff5cf3351553c`.
+Rollback config/consistent SQLite backup:
+`/mnt/data/apps/aiarr-pre-3eec8fe-cncm0vyv`. The runtime adds preservation of
+nested-br technical evidence, exact NNM search sizes/seeders, explicit narration
+language parsing, and a diagnostics dashboard at `/admin`. The public login
+shell contains no operational data; API reads/actions still require the key.
+The key is held only in page memory. HTTP auth tests and JS syntax checks passed;
+a browser-driven UI test has not yet been performed.
+
+The user approved the V4.1 Flash update: the sole model is now `deepseek-flash`;
+the old API alias routes to a retired-model replacement and is rejected by
+configuration validation. Cache namespace changed. Offline total at runtime
+commit: **169 passed**; Ruff passed. Official live smoke is available as
+`tests/live_deepseek.py --run-live`; without the still-missing key it reports
+BLOCKED/exit 2, not PASS. See DEEPSEEK.md for verified official contract links.
+
+The latest production dry-run movie job reached WAITING_FOR_RELEASE: its three
+results have forbidden sources, with no unknown mandatory fields or source
+errors. The series job had 50 candidates and no source errors. Media/download
+mutations remain disabled. The completed movie test stack was shut down;
+synthetic media remains in its isolated staging directory.
+
 - Offline: 152 tests passed; Ruff passed. Commits `0076a81`, `2d63d4b`,
   `2b023ae` add per-source failure stages, retain topic query parameters, and
   parse NNMClub's current first-post markup without including replies.
