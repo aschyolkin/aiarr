@@ -45,6 +45,31 @@ def test_card_first_post_only(post_class):
     assert details.evidence[0].method == "nnmclub-card-v2"
 
 
+def test_malformed_breaks_preserve_audio_evidence():
+    from mae.domain import Evidence, ReleaseDetails, SearchResult
+    from mae.parsing import parse_candidate
+    from mae.security import clean_text
+    text = clean_text('<div>Описание<br>Сюжет<br><span>Аудио:</span> Русский</br></br></div>')
+    assert "Аудио: Русский" in text
+    candidate = parse_candidate(
+        SearchResult(provider="nnm",release_id="42",title="Example.2024.1080p.WEB-DL.H264"),
+        ReleaseDetails(evidence=[Evidence(id="card",text=text,method="fixture")]),
+    )
+    assert any(c.field == "audio_language" and c.value == "rus" for c in candidate.claims)
+
+
+@pytest.mark.parametrize("seed_text,expected", [("0",0),("27",27),("—",None)])
+def test_nnm_exact_bytes_and_unknown_seeders(seed_text, expected):
+    config = ProviderConfig(name="nnm",protocol="nnmclub",url="https://nnmclub.to")
+    body = ('<table><tr><td><a class="topictitle" href="viewtopic.php?t=42">Example</a>'
+            '<a href="download.php?id=7">DL</a></td>'
+            '<td><u>5006225955</u> 4.66 GB</td>'
+            f'<td class="seedmed">{seed_text}</td></tr></table>').encode('cp1251')
+    p = NNMClubProvider(config, HTTP({'https://nnmclub.to/forum/tracker.php':body}))
+    release = p.search(Work(kind="movie",external_id=1,title="Example"))[0]
+    assert release.size == 5006225955 and release.seeders == expected
+
+
 def test_nnmclub_anonymous_search_card_and_handle():
     config = ProviderConfig(name="nnm", protocol="nnmclub", url="https://nnmclub.to", encoding="windows-1251")
     search = b"""<form id="search_form"></form><table><tr><td><a class="topictitle" href="viewtopic.php?t=42"><b>Example / Test</b></a></td><td><a href="download.php?id=7">DL</a></td></tr></table>"""

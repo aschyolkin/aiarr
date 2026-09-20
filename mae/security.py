@@ -18,7 +18,10 @@ def clean_text(value: str) -> str:
     for tag in soup(["script", "style", "iframe", "form", "object"]):
         tag.decompose()
     for tag in soup.find_all("br"):
-        tag.replace_with("\n")
+        # Malformed forum HTML may nest the rest of a post inside <br>.
+        # Replacing the node would discard all its technical evidence.
+        tag.insert_before("\n")
+        tag.unwrap()
     for tag in soup.find_all(["p", "div", "pre", "li", "tr", "blockquote", "h1", "h2", "h3"]):
         tag.insert_before("\n")
         tag.insert_after("\n")

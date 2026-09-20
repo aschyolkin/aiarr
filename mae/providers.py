@@ -198,8 +198,27 @@ class NNMClubProvider:
             details_url = urljoin(self.config.url, "/forum/" + link["href"])
             rid = hashlib.sha256(details_url.encode()).hexdigest()
             self.handles[rid] = DownloadHandle(url=urljoin(self.config.url, "/forum/" + download["href"]))
+            # NNM publishes the exact byte count in a hidden sort key in the
+            # size cell immediately before the seed count. Prefer it over the
+            # rounded human-readable size; unknown must stay unknown.
+            seeds = row.find("td", class_=re.compile(r"^seed(?:med|low|high)?$"))
+            seed_text = seeds.get_text(strip=True) if seeds else ""
+            size_cell = seeds.find_previous_sibling("td") if seeds else None
+            byte_key = size_cell.find("u") if size_cell else None
+            byte_text = byte_key.get_text(strip=True) if byte_key else ""
+            size_text = size_cell.get_text(" ", strip=True) if size_cell else ""
+            size = (
+                int(byte_text)
+                if re.fullmatch(r"[0-9]{1,18}", byte_text)
+                and re.search(r"\b(?:[KMGT]i?B|[КМГТ]Б)\b", size_text, re.I)
+                else None
+            )
             results.append(
-                SearchResult(provider=self.config.name, release_id=rid, title=title, details_url=details_url)
+                SearchResult(
+                    provider=self.config.name, release_id=rid, title=title,
+                    details_url=details_url, size=size,
+                    seeders=int(seed_text) if re.fullmatch(r"[0-9]{1,9}", seed_text) else None,
+                )
             )
         if not results and soup.select_one("#search_form") is None:
             raise ProviderError(Outcome.PARSER_BROKEN)
