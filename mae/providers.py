@@ -215,7 +215,9 @@ class NNMClubProvider:
             soup = BeautifulSoup(raw.decode("windows-1251", errors="strict"), "html.parser")
         except UnicodeError:
             raise ProviderError(Outcome.PARSER_BROKEN) from None
-        card = soup.select_one(".post_body")
+        # NNM's current phpBB layout uses postbody. Only the first post is
+        # release evidence; replies must not contribute technical claims.
+        card = soup.select_one(".post_body, .postbody")
         if card is None:
             if soup.select_one('input[type="password"]'):
                 raise ProviderError(Outcome.AUTH_REQUIRED)
@@ -223,7 +225,7 @@ class NNMClubProvider:
         text = clean_text(str(card))
         if not text:
             raise ProviderError(Outcome.PARSER_BROKEN)
-        return ReleaseDetails(evidence=[Evidence(id="card", text=text, method="nnmclub-card-v1")])
+        return ReleaseDetails(evidence=[Evidence(id="card", text=text, method="nnmclub-card-v2")])
 
     def fetch_file_list(self, release):
         raise ProviderError(Outcome.UNSUPPORTED_CAPABILITY)

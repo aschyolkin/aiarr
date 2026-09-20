@@ -30,6 +30,21 @@ def test_topic_query_survives_real_http_client(respx_mock):
     assert card.called
 
 
+@pytest.mark.parametrize("post_class", ["postbody", "post_body"])
+def test_card_first_post_only(post_class):
+    from mae.domain import SearchResult
+    url = "https://nnmclub.to/forum/viewtopic.php?t=42"
+    config = ProviderConfig(name="nnm", protocol="nnmclub", url="https://nnmclub.to")
+    html = (f'<span class="{post_class}">Аудио: Английский</span>'
+            f'<span class="{post_class}">Комментарий: Русский LostFilm</span>').encode("cp1251")
+    provider = NNMClubProvider(config, HTTP({url: html}))
+    details = provider.fetch_details(SearchResult(
+        provider="nnm", release_id="42", title="Example", details_url=url
+    ))
+    assert details.evidence[0].text == "Аудио: Английский"
+    assert details.evidence[0].method == "nnmclub-card-v2"
+
+
 def test_nnmclub_anonymous_search_card_and_handle():
     config = ProviderConfig(name="nnm", protocol="nnmclub", url="https://nnmclub.to", encoding="windows-1251")
     search = b"""<form id="search_form"></form><table><tr><td><a class="topictitle" href="viewtopic.php?t=42"><b>Example / Test</b></a></td><td><a href="download.php?id=7">DL</a></td></tr></table>"""
