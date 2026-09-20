@@ -1,4 +1,7 @@
-"""Real Seerr onboarding and request contract, dry-run only; no production apps."""
+"""Isolated Seerr contract; optional synthetic movie/series acquisition E2E.
+
+Uses disposable test services only, never production applications or media.
+"""
 
 import json
 import os

@@ -2,6 +2,27 @@
 
 ## Resumed verification — 2026-09-20
 
+Current offline checkout: **171 passed**, Ruff clean (two upstream deprecation
+warnings). Commit `3c60dc2` prevents unknown fields on already hard-rejected
+candidates from unnecessarily triggering manual review; this runtime change is
+not yet deployed in the image listed below.
+
+Isolated series acquisition E2E passed: real Seerr selected-season request,
+13 synthetic S02 episodes, one local multi-file torrent (34,413,613 bytes),
+worker SIGKILL recovery, per-file verification, 13 hardlink imports, exact
+episode coverage and Jellyfin availability. Repeated events produced no duplicate
+torrent/import. Fixture directory:
+`/mnt/data/apps/aiarr-series-e2e-20260920.x2PnxA`.
+The disposable Compose stack was removed; fixture files remain. Run via
+`tests/live_seerr.py --acquire-series-fixture` in the isolated full test stack.
+Synthetic silence tagged `rus` proves metadata handling, not speech recognition.
+This does not certify partial-season updates, new-episode acquisition or TV playback.
+
+Read-only Rutor probe through the existing Prowlarr Torznab endpoint returned
+`RATE_LIMITED`; no download was attempted and no source configuration changed.
+This gateway is not yet live-certified. No repeated immediate retries were made
+after observing this result.
+
 Latest deployed runtime: `media-acquisition-engine:3eec8fe`, verified running
 image `sha256:2d84fba41db76ad997910d6bae99217069378ccc972981b1efbff5cf3351553c`.
 Rollback config/consistent SQLite backup:
@@ -202,7 +223,7 @@ access methods are blocked. No DRM/account restriction bypass attempted.
 
 ## Outstanding implementation / acceptance (not hidden as access blockers)
 
-Real-source movie E2E and series acquisition E2E,
+Real-source movie E2E and partial-season/new-episode acquisition E2E,
 individual episode unmonitoring,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
