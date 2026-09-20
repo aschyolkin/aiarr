@@ -1,0 +1,23 @@
+# DeepSeek integration — 2026-09-20
+
+The user approved upgrading the original V4 Flash requirement to V4.1 Flash.
+The sole permitted model ID is now `deepseek-flash`, through the official
+`https://api.deepseek.com/chat/completions` endpoint. No model fallback exists.
+Old `MAE_DEEPSEEK_MODEL=deepseek-v4-flash` configuration must be replaced before
+startup. The old model's cache namespace is not reused.
+
+Official references checked on 2026-09-20:
+- [Model retirement and current alias](https://api-docs.deepseek.com/quick_start/pricing/)
+- [Thinking toggle](https://api-docs.deepseek.com/guides/thinking_mode/)
+- [JSON output](https://api-docs.deepseek.com/guides/json_mode/)
+
+Requests disable thinking and tools, request JSON, limit output to 1200 tokens,
+and use a 30-second timeout with at most two attempts. Only sanitized evidence
+is sent; validated quotes must refer to provided evidence. Failed or malformed
+answers abstain. LLM-only mandatory claims still require review.
+
+Set `MAE_DEEPSEEK_KEY` privately in the Custom App environment for the API and
+worker, not in Git or logs. Default budget is 20 calls/day; failures also count.
+Offline client tests verify the new request contract, caching, redaction,
+bounded retries, and rejection of alternate model IDs. Live smoke testing
+requires a real key and must be reported separately; it has not yet passed.

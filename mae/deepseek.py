@@ -10,6 +10,9 @@ from mae.domain import Claim
 from mae.parsing import STUDIOS
 from mae.security import clean_text
 
+MODEL = "deepseek-flash"
+CACHE_VERSION = "prompt1/schema1/deepseek-v4.1-flash-20260910"
+
 
 class Interpretation(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -30,7 +33,7 @@ def validate_interpretation(raw, evidence):
     for c in answer.claims:
         if c.evidence_id not in by_id or c.quote not in by_id[c.evidence_id] or c.value not in enums[c.field]:
             raise ValueError("unsupported or ungrounded claim")
-        c.method = "deepseek-v4-flash"
+        c.method = MODEL
     return answer
 
 
@@ -45,7 +48,7 @@ class DeepSeek:
         sanitized = [e.model_copy(update={"text": clean_text(e.text)[:4000]}) for e in evidence[:3]]
         data = [{"id": e.id, "text": e.text} for e in sanitized]
         payload = json.dumps(data, ensure_ascii=False)
-        key = hashlib.sha256(("prompt1/schema1/deepseek-v4-flash/" + payload).encode()).hexdigest()
+        key = hashlib.sha256((CACHE_VERSION + "/" + payload).encode()).hexdigest()
         cached = self.db.execute("SELECT response FROM llm_cache WHERE key=:key", key=key)
         if cached:
             return validate_interpretation(cached[0]["response"], sanitized)
@@ -62,7 +65,7 @@ class DeepSeek:
                         "https://api.deepseek.com/chat/completions",
                         headers={"Authorization": "Bearer " + self.settings.deepseek_key.get_secret_value()},
                         json={
-                            "model": "deepseek-v4-flash",
+                            "model": MODEL,
                             "thinking": {"type": "disabled"},
                             "response_format": {"type": "json_object"},
                             "max_tokens": 1200,
@@ -94,6 +97,6 @@ class DeepSeek:
                     tokens=int(body.get("usage", {}).get("total_tokens", 0)),
                 )
                 return answer
-            except (httpx.HTTPError, ValueError, KeyError, IndexError, ValidationError):
+            except (httpx.HTTPError, ValueError, TypeError, KeyError, IndexError, ValidationError):
                 continue
         return None

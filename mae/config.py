@@ -107,7 +107,7 @@ class Settings(BaseSettings):
     seerr_key: SecretStr = SecretStr("")
     tmdb_key: SecretStr = SecretStr("")
     deepseek_key: SecretStr = SecretStr("")
-    deepseek_model: Literal["deepseek-v4-flash"] = "deepseek-v4-flash"
+    deepseek_model: Literal["deepseek-flash"] = "deepseek-flash"
     deepseek_daily_calls: int = Field(default=20, ge=0)
     max_attempts: int = Field(default=5, ge=1, le=10)
     enrichment_limit: int = Field(default=20, ge=1, le=100)

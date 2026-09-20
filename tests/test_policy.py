@@ -82,7 +82,7 @@ def test_llm_quote_validation():
     evidence = [Evidence(id="1", text="Audio: Russian", method="fixture")]
     claim = {"field": "audio_language", "value": "rus", "evidence_id": "1", "quote": "Audio: Russian"}
     raw = json.dumps({"claims": [claim], "unknown": [], "contradictions": []})
-    assert validate_interpretation(raw, evidence).claims[0].method == "deepseek-v4-flash"
+    assert validate_interpretation(raw, evidence).claims[0].method == "deepseek-flash"
     for change in [
         {"quote": "invented"},
         {"evidence_id": "missing"},
