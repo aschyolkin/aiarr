@@ -1,5 +1,34 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Non-TV work — 2026-09-21
+
+Offline: **207 passed**, Ruff clean. Commit `999547f` adds migration 0007,
+atomic persistent per-day/per-job-generation DeepSeek call/token budgets,
+failure/latency metrics, strict malformed-response handling, and avoids LLM
+calls for hard-rejected candidates. Per-request admission is concurrency-tested.
+The partial-season regression runs real ffprobe/hardlinks with mocked external
+services: first episode, restart, second-episode-only search/import, then a new
+third episode requested without redownloading the first two. This is not a
+live partial-season torrent certification.
+
+Commit `d4591d6` adds non-overwriting SQLite backup/restore with WAL-safe backup,
+checksums, integrity/foreign-key/schema checks and owner-only backup permissions.
+Live rehearsal on a read-only-mounted production DB copy passed: schema 0006
+backed up, restored and upgraded to 0007 with row counts preserved. Private
+artifact directory: `/mnt/data/apps/aiarr-restore-rehearsal.t71fHY`.
+This does not certify a complete production app/config/media rollback.
+
+The first live E2E rerun passed qBittorrent transfer and Jellyfin discovery, but
+timed out at Seerr readiness. Installed Seerr 3.4.1 code showed that default
+`/api/v1/status` awaits GitHub update checks. Its documented query parameter
+`checkUpdateAvailable=false` returned HTTP 200 immediately and is now used by
+the test. Failed fixture directory: `/mnt/data/apps/aiarr-series-e2e-20260920.qSyY74`.
+That disposable stack and the separate diagnostic Seerr were removed; test
+files were retained. Rutor gateway search returned TEMPORARY_FAILURE, not PASS.
+
+Production deployment and final E2E result are recorded separately below when
+verified; a successful local build is not a deployed change.
+
 ## Resumed verification — 2026-09-20
 
 ### Latest continuation: DeepSeek and TV preparation

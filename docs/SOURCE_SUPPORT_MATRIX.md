@@ -3,6 +3,11 @@
 Protocol implementation is not live site certification. No source cookies or
 private fixtures have been imported. No random mirrors selected.
 
+2026-09-21 gateway recheck: public Rutor via existing Prowlarr Torznab returned
+TEMPORARY_FAILURE. Earlier 2026-09-20 check returned RATE_LIMITED. Neither is
+successful live certification; no torrent was requested, no tracker login or
+gateway configuration change was performed.
+
 2026-09-20 update for NNMClub: fixed topic-query loss (`params={}` in httpx)
 and current `.postbody` markup. Four anonymous live cards passed through the
 actual adapter in the production worker network. Production dry-run searches
