@@ -1,11 +1,15 @@
+import hashlib
+import shutil
 import subprocess
 from pathlib import Path
 from unittest.mock import Mock
 
+import bencodepy
 import httpx
 import pytest
 
-from mae.domain import Work
+from mae.db import Database
+from mae.domain import DownloadHandle, Evidence, ReleaseDetails, SearchResult, Work
 from mae.worker import Worker
 
 
@@ -133,3 +137,65 @@ def test_every_episode_probed_before_publishing_pack(db, series_env):
     assert db.job(job_id)["state"] == "NEEDS_REVIEW"
     assert not db.execute("SELECT * FROM imports")
     assert not list((settings.store / "serials").glob("**/*.mkv"))
+
+
+def test_partial_season_resume_then_new_episode_preserves_existing_files(db, series_env):
+    settings, downloader, work, folder, route = series_env
+    job_id = db.submit(work, False)
+    first = folder / 'Example.S01E01.1080p.WEB-DL.H264.mkv'
+    downloader.files.return_value = [{'name': first.name}]
+    db.transition(job_id, 'DOWNLOADING', torrent_hash='a' * 40)
+    existing = [{'Path': '/data/store/serials/e1.mkv', 'ParentIndexNumber': 1, 'IndexNumber': 1}]
+    route.respond(200, json={'Items': existing})
+    Worker(settings, db, [], downloader).tick()
+    assert db.job(job_id)['reason'] == 'PARTIAL_SEASON'
+    original = db.execute('SELECT * FROM imports')[0]
+    inode = Path(original['destination']).stat().st_ino
+
+    next_folder = folder / 'next-release'
+    next_folder.mkdir()
+    second = next_folder / 'Example.S01E02.1080p.WEB-DL.H264.mkv'
+    shutil.copyfile(first, second)  # Synthetic fixture, not engine import fallback.
+    content = second.read_bytes()
+    raw = bencodepy.encode({b'info': {
+        b'name': second.name.encode(), b'length': len(content), b'piece length': 16384,
+        b'pieces': b''.join(hashlib.sha1(content[i:i+16384]).digest() for i in range(0, len(content), 16384)),
+    }})
+    provider = Mock()
+    provider.config.name = 'fixture'
+    provider.search.return_value = [SearchResult(
+        provider='fixture', release_id='episode-two', title=second.name, size=len(content), seeders=1,
+    )]
+    provider.fetch_details.return_value = ReleaseDetails(evidence=[
+        Evidence(id='audio', text='Audio: Russian', method='fixture'),
+    ])
+    provider.resolve_download.return_value = DownloadHandle(url='http://fixture.test/release')
+    provider.http.get.return_value = raw
+    restarted = Database(settings.state_dir)
+    restarted.execute('UPDATE jobs SET next_run=0 WHERE id=:id', id=job_id)
+    Worker(settings, restarted, [provider], downloader).tick()
+    assert provider.search.call_args.args[0].episodes == ['S01E02']
+    assert restarted.job(job_id)['state'] == 'DOWNLOADING'
+    downloader.add.assert_called_once()
+
+    downloader.info.return_value = {'progress': 1, 'state': 'uploading', 'save_path': str(next_folder)}
+    downloader.files.return_value = [{'name': second.name}]
+    route.respond(200, json={'Items': existing + [
+        {'Path': '/data/store/serials/e2.mkv', 'ParentIndexNumber': 1, 'IndexNumber': 2},
+    ]})
+    Worker(settings, restarted, [provider], downloader).tick()
+    assert restarted.job(job_id)['state'] == 'AVAILABLE'
+    assert len(restarted.execute('SELECT * FROM imports')) == 2
+    assert Path(original['destination']).stat().st_ino == inode
+    assert first.stat().st_nlink == second.stat().st_nlink == 2
+
+    assert restarted.submit(work.model_copy(update={
+        'episodes': ['S01E01', 'S01E02', 'S01E03'],
+    }), False) == job_id
+    assert restarted.job(job_id)['state'] == 'REQUESTED'
+    provider.search.return_value = []
+    Worker(settings, restarted, [provider], downloader).tick()
+    assert provider.search.call_args.args[0].episodes == ['S01E03']
+    assert restarted.job(job_id)['state'] == 'WAITING_FOR_RELEASE'
+    downloader.add.assert_called_once()
+    assert len(restarted.execute('SELECT * FROM imports')) == 2

@@ -35,3 +35,26 @@ configured: `uv run python tests/live_deepseek.py --run-live`. It sends only
 synthetic technical evidence, uses disposable SQLite state, validates grounded
 Russian-audio extraction and cache reuse, and prints no tokens/credentials.
 Exit 2 means missing key, not success; at most two billed calls are permitted.
+
+## Persistent budgets and outcomes (2026-09-21)
+
+Migration 0007 adds atomic SQLite admission reservations, per-request keys,
+charged-token accounting, outcomes and latency. Defaults: 20 calls / 200,000
+tokens per UTC day; 6 calls / 60,000 tokens per job generation across retries,
+searches and restarts. Cache hits consume no new call budget. New generations
+still share the daily limit. Four concurrent admission attempts against a
+one-call budget are tested to admit exactly one.
+
+Admission estimates input cost conservatively from UTF-8 message bytes plus
+4,096 framing allowance and 1,200 output tokens; this is not exact model
+tokenization or a provider-side spending cap. Reported usage replaces the
+estimate. When usage is unavailable (including crash/timeouts), the reservation
+remains charged. Legacy rows preserve reported tokens but cannot retroactively
+recover missing usage. Metrics expose actual tokens separately from charged
+reservations and group sanitized outcomes/latency; no response bodies are logged.
+
+HTTP 400/401/402/403/404/429 do not trigger an immediate second request. Other
+bounded transport/response failures abstain after at most two attempts. Wrong
+top-level JSON types and absent/malformed usage are covered. Already hard-rejected
+candidates do not invoke the LLM. This section describes code and offline tests;
+deployment and live results must be checked in ACCEPTANCE.md.

@@ -109,6 +109,9 @@ class Settings(BaseSettings):
     deepseek_key: SecretStr = SecretStr("")
     deepseek_model: Literal["deepseek-flash"] = "deepseek-flash"
     deepseek_daily_calls: int = Field(default=20, ge=0)
+    deepseek_daily_tokens: int = Field(default=200000, ge=0)
+    deepseek_request_calls: int = Field(default=6, ge=0)
+    deepseek_request_tokens: int = Field(default=60000, ge=0)
     max_attempts: int = Field(default=5, ge=1, le=10)
     enrichment_limit: int = Field(default=20, ge=1, le=100)
     reserve_bytes: int = Field(default=5 * 1024**3, ge=0)

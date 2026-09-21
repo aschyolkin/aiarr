@@ -182,8 +182,10 @@ class Worker:
                     self.db.transition(job["id"], "ENRICHING")
                     details = provider.fetch_details(release)
                     candidate = evaluate(parse_candidate(release, details), work, self.settings.policy)
-                    if candidate.unknown and details.evidence:
-                        interpretation = DeepSeek(self.settings, self.db).interpret(details.evidence)
+                    if candidate.unknown and not candidate.reasons and details.evidence:
+                        interpretation = DeepSeek(self.settings, self.db).interpret(
+                            details.evidence, request_key=f"job:{job['id']}:generation:{job['generation']}"
+                        )
                         if interpretation:
                             # LLM-only mandatory claims require review in this version.
                             # Exact quotes alone do not prove semantic entailment.

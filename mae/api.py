@@ -113,6 +113,10 @@ def create_app(settings=None, db=None, seerr=None):
         return {
             "queue": db.execute("SELECT state,COUNT(*) count FROM jobs GROUP BY state"),
             "llm": db.execute("SELECT day,COUNT(*) calls,SUM(tokens) tokens FROM llm_usage GROUP BY day"),
+            "llm_outcomes": db.execute(
+                "SELECT day,outcome,COUNT(*) calls,SUM(charged_tokens) charged_tokens,"
+                "AVG(latency_ms) latency_ms FROM llm_usage GROUP BY day,outcome"
+            ),
             "imports": db.execute("SELECT state,COUNT(*) count FROM imports GROUP BY state"),
         }
 
