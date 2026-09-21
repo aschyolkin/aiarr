@@ -2,7 +2,7 @@
 
 Experimental build. Read ACCEPTANCE.md before any production switch.
 
-Latest checkpoint (2026-09-20): aiarr runs `media-acquisition-engine:3eec8fe`
+Latest verified checkpoint (2026-09-20): aiarr runs `media-acquisition-engine:d442e18`
 with dry-run enabled. See the dated ACCEPTANCE update for the verified image
 ID and backups. Seerr has saved non-default aiarr services for movies/series
 with scans and automatic search disabled; legacy defaults are unchanged.
@@ -17,6 +17,23 @@ TrueNAS detected 25.10.7; its [Custom App documentation](https://www.truenas.com
 supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 
 ## Recorded isolated deployment — 2026-09-09
+
+New local backup utility (not yet deployed in the image above):
+
+```
+uv run python -m mae.backup backup /path/to/state /path/to/new-backup
+uv run python -m mae.backup restore-new /path/to/new-backup /path/to/new-restore
+```
+
+The destination must not exist. SQLite backup includes committed WAL data;
+checksum, quick_check, foreign keys and schema are verified. Restoring never
+overwrites the current state directory. This covers the engine database only:
+back up private app configuration separately and retain media/download datasets.
+For actual rollback stop the engine, restore to a new directory, validate with
+the matching old image and explicitly switch its state mount. No automatic
+destructive schema downgrade is provided. Local backup/restore fault tests do
+not constitute a production rollback rehearsal. Migration 0007 introduces
+DeepSeek budgets and metrics; back up state before deploying it.
 
 TrueNAS 25.10.7 was inventoried before deployment. `/mnt/data/store` is the
 single media dataset and has the required `downloads/films`,

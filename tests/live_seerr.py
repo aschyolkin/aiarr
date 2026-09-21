@@ -62,7 +62,8 @@ def main(acquire_fixture=False, extend_season=False, lifecycle=False, acquire_se
     with httpx.Client(base_url=jellyfin_url, timeout=60, trust_env=False) as jellyfin:
         wait_http_ready(jellyfin, "/System/Info/Public").raise_for_status()
     with httpx.Client(base_url=seerr_url, timeout=60, trust_env=False) as seerr:
-        status = wait_http_ready(seerr, "/api/v1/status")
+        # Default /status checks GitHub releases, which is unrelated to readiness.
+        status = wait_http_ready(seerr, "/api/v1/status?checkUpdateAvailable=false")
         status.raise_for_status()
         login = seerr.post(
             "/api/v1/auth/jellyfin",
