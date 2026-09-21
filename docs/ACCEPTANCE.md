@@ -29,6 +29,20 @@ files were retained. Rutor gateway search returned TEMPORARY_FAILURE, not PASS.
 Production deployment and final E2E result are recorded separately below when
 verified; a successful local build is not a deployed change.
 
+Final series E2E rerun **passed** from `d4591d6`: real Seerr movie/selected-season
+contract, synthetic 13-episode torrent, actual worker SIGKILL recovery, 13
+verified hardlink imports and Jellyfin AVAILABLE without duplicate torrent or
+import. Fixture directory: `/mnt/data/apps/aiarr-series-e2e-20260920.a3gijV`.
+Disposable services/networks were removed automatically; synthetic files remain.
+
+Runtime `media-acquisition-engine:d4591d6` was submitted via TrueNAS app.update
+job 43018 after config/consistent SQLite backup in
+`/mnt/data/apps/aiarr-pre-d4591d6-h6gygvnx`. Built digest:
+`sha256:41d07375ee8e577d73c3ac62ac44e2ff5fde3772908a50715fdabd5dac17a68b`.
+Post-update verification passed: both API/worker running the new tag, schema
+0007, authenticated health and outcome metrics, dry-run true, and official
+DeepSeek smoke PASS (one call, cache verified). No production download cutover.
+
 ## Resumed verification — 2026-09-20
 
 ### Latest continuation: DeepSeek and TV preparation

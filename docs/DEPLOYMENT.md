@@ -2,7 +2,7 @@
 
 Experimental build. Read ACCEPTANCE.md before any production switch.
 
-Latest verified checkpoint (2026-09-20): aiarr runs `media-acquisition-engine:d442e18`
+Latest verified checkpoint (2026-09-21): aiarr runs `media-acquisition-engine:d4591d6`
 with dry-run enabled. See the dated ACCEPTANCE update for the verified image
 ID and backups. Seerr has saved non-default aiarr services for movies/series
 with scans and automatic search disabled; legacy defaults are unchanged.
@@ -18,7 +18,7 @@ supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 
 ## Recorded isolated deployment — 2026-09-09
 
-New local backup utility (not yet deployed in the image above):
+Backup utility (included in the image above):
 
 ```
 uv run python -m mae.backup backup /path/to/state /path/to/new-backup
