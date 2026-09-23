@@ -152,7 +152,11 @@ class Worker:
             if not work.episodes:
                 self.db.transition(job["id"], "WAITING_FOR_RELEASE", "NO_EPISODES_IN_METADATA", delay=3600)
                 return
-            work = work.model_copy(update={"episodes": sorted(set(work.episodes) - covered)})
+            monitored = set(work.episodes)
+            work = work.model_copy(update={
+                "episodes": sorted(monitored - covered),
+                "covered_episodes": sorted(monitored & covered),
+            })
             if not work.episodes:
                 self.db.transition(job["id"], "AVAILABLE", reserved=0)
                 return
@@ -237,6 +241,8 @@ class Worker:
             self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
             return
         _, candidate, provider = selected
+        if work.kind == "series":
+            candidate.parsed["download_episodes"] = work.episodes
         self.db.transition(job["id"], "SELECTED", candidate=candidate.model_dump_json())
         if job["dry_run"] or self.settings.dry_run:
             self.db.transition(job["id"], "NEEDS_REVIEW", "DRY_RUN_SELECTED")
@@ -287,15 +293,25 @@ class Worker:
         # on restart; never add again blindly or issue a second candidate.
         self.db.transition(job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size)
         if raw is None:
-            self.downloader.resume(torrent_hash)
+            if work.kind == "series":
+                self.downloader.complete_selection(torrent_hash, work.episodes)
+            else:
+                self.downloader.resume(torrent_hash)
         else:
-            self.downloader.add(raw, torrent_hash, work.kind)
+            self.downloader.add(raw, torrent_hash, work.kind, work.episodes if work.kind == "series" else None)
 
     def monitor(self, job, work):
         info = self.downloader.info(job["torrent_hash"])
         if info is None:
             self.retry(job, "ADD_OUTCOME_UNCONFIRMED")
             return
+        if "mae-selection-pending" in {x.strip() for x in info.get("tags", "").split(",")}:
+            candidate = json.loads(job["candidate"] or "{}")
+            wanted = candidate.get("parsed", {}).get("download_episodes")
+            if not isinstance(wanted, list) or not wanted:
+                raise ValueError("TORRENT_SELECTION_INTENT_MISSING")
+            self.downloader.complete_selection(job["torrent_hash"], wanted)
+            info = self.downloader.info(job["torrent_hash"])
         if info.get("state") in {"error", "missingFiles"}:
             raise ValueError("DOWNLOAD_FILES_OR_STORAGE_ERROR")
         if float(info["progress"]) < 1:
@@ -306,7 +322,12 @@ class Worker:
             return
         self.db.transition(job["id"], "VERIFYING")
         paths = []
+        selected_episodes = set(json.loads(job["candidate"] or "{}").get("parsed", {}).get(
+            "download_episodes", work.episodes
+        )) if work.kind == "series" else set()
         for file in self.downloader.files(job["torrent_hash"]):
+            if file.get("priority", 1) == 0:
+                continue
             relative = safe_relative(file["name"])
             if relative.suffix.lower() not in {".mkv", ".mp4", ".m4v", ".avi", ".ts"}:
                 continue
@@ -318,6 +339,8 @@ class Worker:
                     continue
                 if not set(keys).issubset(work.episodes):
                     raise ValueError("FILE_COVERS_UNMONITORED_EPISODE")
+                if not set(keys).issubset(selected_episodes):
+                    raise ValueError("FILE_OUTSIDE_SELECTED_EPISODES")
             source = Path(info["save_path"]) / relative
             if not source.is_relative_to(self.settings.store / "downloads"):
                 raise ValueError("DOWNLOAD_OUTSIDE_MANAGED_PATH")

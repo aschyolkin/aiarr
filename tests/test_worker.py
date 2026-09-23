@@ -6,7 +6,7 @@ import httpx
 
 from mae.config import ProviderConfig
 from mae.db import Database
-from mae.domain import Outcome, ProviderError, ReleaseDetails, SearchResult
+from mae.domain import Evidence, Outcome, ProviderError, ReleaseDetails, SearchResult, Work
 from mae.providers import TorznabProvider
 from mae.worker import Worker
 
@@ -27,6 +27,30 @@ def test_dry_run_restart_dedup(settings, db, movie, respx_mock):
     assert restarted.submit(movie) == job_id
     Worker(settings, restarted, [p], downloader).tick()
     assert len(restarted.jobs()) == 1 and not downloader.add.called
+
+
+def test_dry_run_selects_pack_only_for_missing_episode(settings, db, monkeypatch):
+    settings = settings.model_copy(update={"jellyfin_key": settings.api_key})
+    monkeypatch.setattr("mae.worker.Jellyfin.coverage", lambda _self, _work: {"S01E01"})
+    provider = Mock()
+    provider.config.name = "fixture"
+    provider.search.return_value = [SearchResult(
+        provider="fixture", release_id="pack", title="Example.S01E01-E02.1080p.WEB-DL.H.264",
+        size=1000,
+    )]
+    provider.fetch_details.return_value = ReleaseDetails(evidence=[
+        Evidence(id="card", text="Audio #1: Russian", method="fixture")
+    ])
+    downloader = Mock()
+    job_id = db.submit(Work(kind="series", external_id=9, title="Example", seasons=[1],
+                            episodes=["S01E01", "S01E02"]), True)
+
+    Worker(settings, db, [provider], downloader).tick()
+
+    job = db.job(job_id)
+    assert job["reason"] == "DRY_RUN_SELECTED"
+    assert json.loads(job["candidate"])["parsed"]["download_episodes"] == ["S01E02"]
+    downloader.add.assert_not_called()
 
 
 def test_missing_torrent_does_not_repeat_add(settings, db, movie):

@@ -6,8 +6,10 @@ from urllib.parse import parse_qs, urlsplit
 
 import bencodepy
 import qbittorrentapi
+from guessit import guessit
 
 from mae.domain import Outcome, ProviderError
+from mae.parsing import episode_keys
 
 
 def safe_relative(value):
@@ -89,6 +91,7 @@ class NoReplayClient(qbittorrentapi.Client):
 
 class Downloader:
     category = "mae"
+    selection_tag = "mae-selection-pending"
 
     def __init__(self, settings):
         self.settings = settings
@@ -111,8 +114,10 @@ class Downloader:
             raise ValueError("TORRENT_OWNED_BY_ANOTHER_SERVICE")
         return row
 
-    def add(self, raw, torrent_hash, kind):
+    def add(self, raw, torrent_hash, kind, wanted_episodes=None):
         if self.info(torrent_hash):
+            if kind == "series":
+                self.complete_selection(torrent_hash, wanted_episodes)
             return
         categories = self.client.torrents_categories()
         if self.category not in categories:
@@ -122,13 +127,60 @@ class Downloader:
             torrent_files=raw,
             category=self.category,
             save_path=f"/data/store/downloads/{folder}",
-            tags="media-acquisition-engine",
+            tags=(
+                f"media-acquisition-engine,{self.selection_tag}"
+                if kind == "series" else "media-acquisition-engine"
+            ),
+            is_stopped=True if kind == "series" else None,
             use_auto_torrent_management=False,
         )
         # Newer qBittorrent versions can return structured add metadata.
         # Reconcile actual client state rather than assuming one response string.
         if result != "Ok." and not self.info(torrent_hash):
             raise ProviderError(Outcome.TEMPORARY_FAILURE)
+        if kind == "series":
+            self.complete_selection(torrent_hash, wanted_episodes)
+
+    def complete_selection(self, torrent_hash, wanted_episodes):
+        info = self.info(torrent_hash)
+        if info is None:
+            raise ProviderError(Outcome.TEMPORARY_FAILURE)
+        if self.selection_tag not in {tag.strip() for tag in info.get("tags", "").split(",")}:
+            raise ValueError("TORRENT_SELECTION_MARKER_MISSING")
+        if not wanted_episodes or not all(
+            isinstance(key, str) and len(key) == 6 and key[:1] == "S" and key[3:4] == "E"
+            and key[1:3].isdigit() and key[4:].isdigit() for key in wanted_episodes
+        ):
+            raise ValueError("TORRENT_SELECTION_INTENT_MISSING")
+        wanted = set(wanted_episodes)
+        files = self.files(torrent_hash)
+        if not files or len(files) > 10000:
+            raise ProviderError(Outcome.TEMPORARY_FAILURE)
+        chosen = set()
+        priorities = {}
+        for row in files:
+            path = safe_relative(row["name"])
+            keys = set(episode_keys(guessit(str(path)))) if path.suffix.lower() in {
+                ".mkv", ".mp4", ".m4v", ".avi", ".ts"
+            } else set()
+            if keys & wanted and not keys.issubset(wanted):
+                raise ValueError("TORRENT_FILE_COVERS_UNMONITORED_EPISODE")
+            selected = bool(keys & wanted)
+            if selected:
+                chosen.update(keys)
+            priorities[row["index"]] = 1 if selected else 0
+        if not chosen:
+            raise ValueError("TORRENT_OVERLAPS_EXISTING_OR_UNREQUESTED_EPISODES")
+        for index, priority in priorities.items():
+            self.client.torrents_file_priority(torrent_hash=torrent_hash, file_ids=index, priority=priority)
+        verified = self.files(torrent_hash)
+        if len(verified) != len(files) or any(
+            row["index"] not in priorities or row["priority"] != priorities[row["index"]]
+            for row in verified
+        ):
+            raise ProviderError(Outcome.TEMPORARY_FAILURE)
+        self.resume(torrent_hash)
+        self.client.torrents_remove_tags(tags=self.selection_tag, torrent_hashes=torrent_hash)
 
     def magnet_preflight(self, url, kind, timeout=30):
         """Obtain magnet metadata without allowing payload download to start."""
@@ -143,7 +195,10 @@ class Downloader:
                 urls=url,
                 category=self.category,
                 save_path=f"/data/store/downloads/{folder}",
-                tags="media-acquisition-engine,mae-preflight",
+                tags=(
+                    f"media-acquisition-engine,mae-preflight,{self.selection_tag}"
+                    if kind == "series" else "media-acquisition-engine,mae-preflight"
+                ),
                 use_auto_torrent_management=False,
                 stop_condition="MetadataReceived",
             )

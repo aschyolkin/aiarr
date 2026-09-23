@@ -52,6 +52,8 @@ class Work(BaseModel):
     seasons: list[int] = []
     # Keys SxxExx, desired coverage from metadata, never inferred from a pack.
     episodes: list[str] = []
+    # Transient search context: monitored episodes already confirmed in library.
+    covered_episodes: list[str] = []
 
 
 class SearchResult(BaseModel):

@@ -1,4 +1,5 @@
 import hashlib
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -110,6 +111,31 @@ def test_unmonitored_separate_pack_file_is_not_imported(db, series_env):
     imports = db.execute("SELECT episode FROM imports WHERE job_id=:id", id=job_id)
     assert [row["episode"] for row in imports] == ["S01E01"]
     assert db.job(job_id)["state"] == "AVAILABLE"
+
+
+def test_unselected_pack_file_is_not_probed_or_imported(db, series_env):
+    settings, downloader, work, folder, route = series_env
+    job_id = db.submit(work, False)
+    db.transition(
+        job_id, "DOWNLOADING", torrent_hash="a" * 40,
+        candidate=json.dumps({"parsed": {
+            "download_episodes": ["S01E01"], "screen_size": "1080p", "video_codec": "H.264"
+        }}),
+    )
+    downloader.files.return_value = [
+        {"name": "Example.S01E01.1080p.WEB-DL.H264.mkv", "priority": 1},
+        {"name": "Example.S01E02.1080p.WEB-DL.H264.mkv", "priority": 0},
+    ]
+    route.respond(200, json={"Items": [
+        {"Path": "/data/store/serials/e1.mkv", "ParentIndexNumber": 1, "IndexNumber": 1}
+    ]})
+
+    Worker(settings, db, [], downloader).tick()
+
+    imports = db.execute("SELECT episode FROM imports WHERE job_id=:id", id=job_id)
+    assert [row["episode"] for row in imports] == ["S01E01"], db.job(job_id)["reason"]
+    assert db.job(job_id)["state"] == "WAITING_FOR_RELEASE"
+    assert (folder / "Example.S01E02.1080p.WEB-DL.H264.mkv").stat().st_nlink == 1
 
 
 def test_combined_file_covering_unmonitored_episode_requires_review(db, series_env):

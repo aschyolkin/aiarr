@@ -104,6 +104,18 @@ def test_wrong_episode():
     assert "EPISODE_MISMATCH" in c.reasons
 
 
+def test_pack_can_cover_missing_episode_only_when_other_episodes_are_monitored_and_covered():
+    title = "Example.S01E01-E02.1080p.WEB-DL.H.264"
+    work = Work(
+        kind="series", external_id=9, title="Example", seasons=[1],
+        episodes=["S01E02"], covered_episodes=["S01E01"],
+    )
+    accepted = evaluate(candidate("Audio: Russian", title), work, Policy())
+    assert not accepted.reasons and not accepted.unknown and accepted.score
+    rejected = evaluate(candidate("Audio: Russian", title), work.model_copy(update={"covered_episodes": []}), Policy())
+    assert "EPISODE_MISMATCH" in rejected.reasons
+
+
 def test_llm_quote_validation():
     evidence = [Evidence(id="1", text="Audio: Russian", method="fixture")]
     claim = {"field": "audio_language", "value": "rus", "evidence_id": "1", "quote": "Audio: Russian"}

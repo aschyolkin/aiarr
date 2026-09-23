@@ -18,7 +18,10 @@ def evaluate(candidate, work, policy):
         if p.get("season") not in work.seasons:
             c.reasons.append("SEASON_MISMATCH")
         keys = episode_keys(p)
-        if keys and not set(keys).issubset(work.episodes):
+        if keys and (
+            not set(keys).issubset(set(work.episodes) | set(work.covered_episodes))
+            or not set(keys).intersection(work.episodes)
+        ):
             c.reasons.append("EPISODE_MISMATCH")
         if not work.episodes:
             c.unknown.append("desired_episode_coverage")
