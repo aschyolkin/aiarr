@@ -15,7 +15,7 @@ properties and LLM-only interpretations wait for review.
 
 ## Текущий статус — 2026-09-23
 
-В TrueNAS работает production-образ `media-acquisition-engine:83881b1`
+В TrueNAS работает production-образ `media-acquisition-engine:aca38c1`
 с `MAE_DRY_RUN=false`. Seerr направляет новые фильмы и сериалы в aiarr;
 Radarr и Sonarr удалены после успешной проверки реального скачивания и
 импорта. В qBittorrent сейчас выполняются реальные загрузки, поэтому обновление
@@ -35,7 +35,7 @@ Radarr и Sonarr удалены после успешной проверки р�
 - настройки источников, API-ключей и DeepSeek сохраняются на сервере и не
   запрашиваются повторно при обновлении страницы.
 
-Пакет развёрнут в production образом `media-acquisition-engine:83881b1`
+Пакет развёрнут в production образом `media-acquisition-engine:aca38c1`
 (см. [acceptance record](docs/ACCEPTANCE.md)). Осталось вживую проверить вход
 через сессию Seerr в браузере и удаление импортированного файла на тестовой
 заявке.

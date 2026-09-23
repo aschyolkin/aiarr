@@ -1,5 +1,24 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Источники и деплой aca38c1 — 2026-09-24
+
+Домены rutor.info/.is/.org, kinozal.tv/.guru/.me, newstudio.tv,
+redheadsound.studio, fla-fi.studio добавлены в `netshift.main.user_domains_text`
+на роутере Щёкино (бэкап `/etc/config/netshift.bak.20260924-003531`). С TrueNAS
+теперь открываются rutor.info, rutor.is и newstudio.tv. Итог по источникам aiarr:
+nnmclub, bigfan, rutracker-org, rutor (Prowlarr id 1, 100 результатов на
+проверке), newstudio (Prowlarr id 14, добавлен, только сериалы).
+
+Не работают: Kinozal — CloudFlare блокирует вход даже через FlareSolverr
+(тег `flaresolverr` добавлен индексатору 11; сам FlareSolverr главную
+kinozal.guru проходит за 13 с, отказ на шаге логина); fla-fi.studio — таймаут и
+через VPN; redheadsound.studio — 502 через VPN. `rutor.org.in` — не зеркало
+Rutor, а посторонний DLE-сайт с играми (нет magnet, поиск уводит на главную).
+`rutor.org` отвечает 403 (CloudFlare).
+
+Образ `aca38c1`: после «Проверить и сохранить» у логина трекера рисуется
+✅ или ❌ с текстом ошибки Prowlarr; таймаут проверки 400 с.
+
 ## Production deployment 83881b1 — 2026-09-24
 
 Отдельные страницы «Заявки / Источники / Настройки» (навигация справа
