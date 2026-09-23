@@ -1,6 +1,13 @@
+import re
+
 import httpx
 
 from mae.domain import Work
+
+
+def poster(detail):
+    value = detail.get("posterPath")
+    return value if isinstance(value, str) and re.fullmatch(r"/[A-Za-z0-9_.-]{1,199}", value) else None
 
 
 class Seerr:
@@ -64,7 +71,26 @@ class Seerr:
             original_language=detail.get("originalLanguage"),
             seasons=seasons,
             episodes=episodes,
+            poster_path=poster(detail),
         )
+
+    def backfill_poster(self, db, request):
+        """Jobs created before posters were stored get one TMDB lookup."""
+        if type(request.get("id")) is not int:
+            return
+        rows = db.execute(
+            "SELECT job_id FROM seerr_requests r JOIN jobs j ON j.id=r.job_id WHERE r.request_id=:id "
+            "AND json_extract(j.work,'$.poster_path') IS NULL", id=request["id"],
+        )
+        if not rows:
+            return
+        try:
+            media = request["media"]
+            detail = self.get(f"/{'movie' if request['type'] == 'movie' else 'tv'}/{media['tmdbId']}")
+        except Exception:
+            return  # Display-only data; never blocks reconciliation.
+        if value := poster(detail):
+            db.set_poster(rows[0]["job_id"], value)
 
     def reconcile(self, db, dry_run):
         # Repeated webhook/facade/poll events converge on the same request identity.
@@ -84,6 +110,7 @@ class Seerr:
                 rows = db.execute("SELECT job_id FROM seerr_requests WHERE request_id=:id", id=request_id)
                 if rows:
                     db.observe_seerr_request(request_id, rows[0]["job_id"], request.get("status"))
+            self.backfill_poster(db, request)
         # A list can omit a record because of Seerr filtering. Confirm each
         # disappearance through its own endpoint before deleting any file.
         for row in db.execute("SELECT request_id,job_id FROM seerr_requests WHERE status!=-1"):

@@ -54,6 +54,8 @@ class Work(BaseModel):
     episodes: list[str] = []
     # Transient search context: monitored episodes already confirmed in library.
     covered_episodes: list[str] = []
+    # TMDB poster path from Seerr, display only.
+    poster_path: str | None = Field(default=None, max_length=200, pattern=r"^/[A-Za-z0-9_.-]+$")
 
 
 class SearchResult(BaseModel):

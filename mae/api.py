@@ -1,19 +1,20 @@
 import base64
 import hashlib
 import json
+import re
 import secrets
 import shutil
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from mae.admin import ADMIN_HTML
 from mae.config import Settings
 from mae.db import Database
 from mae.domain import Work
-from mae.runtime_config import RuntimeConfig
+from mae.runtime_config import RuntimeConfig, plain
 from mae.seerr import Seerr
 from mae.seerr_session import same_origin_write, seerr_admin_session
 
@@ -21,6 +22,26 @@ from mae.seerr_session import same_origin_write, seerr_admin_session
 class ConfigUpdate(BaseModel):
     revision: str
     settings: dict
+
+
+class Credentials(BaseModel):
+    username: str = Field(min_length=1, max_length=200)
+    password: str = Field(default="", max_length=500)
+
+
+PROWLARR_INDEXER = re.compile(r"(https?://[^/?#]+)/(\d{1,6})/api/?")
+
+
+def prowlarr(provider):
+    """Base URL, indexer id and key of a Torznab provider served by Prowlarr."""
+    match = PROWLARR_INDEXER.fullmatch(provider.url)
+    if provider.protocol != "torznab" or not provider.trusted_gateway or not match:
+        return None
+    return match[1], int(match[2]), provider.api_key.get_secret_value()
+
+
+def prowlarr_client(base, key):
+    return httpx.Client(base_url=base + "/api/v1", headers={"X-Api-Key": key}, timeout=90, trust_env=False)
 
 
 def create_app(settings=None, db=None, seerr=None):
@@ -105,9 +126,9 @@ def create_app(settings=None, db=None, seerr=None):
             "SELECT j.id,j.work,j.state,j.reason,j.torrent_hash,j.dry_run,j.cancel_pause_done,"
             "(SELECT COUNT(*) FROM episodes e WHERE e.job_id=j.id AND e.monitored=1) wanted,"
             "(SELECT COUNT(*) FROM episodes e WHERE e.job_id=j.id AND e.monitored=1 AND e.available=1) ready,"
-            "(SELECT COUNT(*) FROM imports i WHERE i.job_id=j.id AND i.state='PUBLISHED') imported "
-            "FROM jobs j WHERE NOT (j.state='CANCELLED' AND j.reason='SEERR_REQUEST_DELETED' "
-            "AND j.cancel_pause_done=1) ORDER BY j.id DESC"
+            "(SELECT COUNT(*) FROM imports i WHERE i.job_id=j.id AND i.state='PUBLISHED') imported,"
+            "json_extract(j.candidate,'$.image_url') image_url "
+            "FROM jobs j WHERE j.state!='CANCELLED' ORDER BY j.id DESC"
         )
         if any(row["torrent_hash"] for row in rows):
             try:
@@ -175,6 +196,74 @@ def create_app(settings=None, db=None, seerr=None):
             for p in settings.providers
         ]
 
+    def prowlarr_gateway():
+        for provider in config.load().providers:
+            if target := prowlarr(provider):
+                return target
+        raise HTTPException(404, "No Prowlarr-backed Torznab source configured")
+
+    @app.get("/admin/indexers")
+    def indexers():
+        """All Prowlarr indexers, linked to the aiarr sources that use them.
+
+        Passwords never leave Prowlarr; only whether a login is set.
+        """
+        base, _, key = prowlarr_gateway()
+        linked = {}
+        for provider in config.load().providers:
+            if (target := prowlarr(provider)) and target[0] == base:
+                linked[target[1]] = provider.name
+        try:
+            with prowlarr_client(base, key) as client:
+                rows = client.get("/indexer").raise_for_status().json()
+                status = {s.get("indexerId"): s for s in client.get("/indexerstatus").raise_for_status().json()}
+        except httpx.HTTPError:
+            raise HTTPException(503, "Prowlarr unavailable") from None
+        result = []
+        for data in rows:
+            fields = {f.get("name"): f for f in data.get("fields", [])}
+            state = status.get(data.get("id"), {})
+            result.append({
+                "indexer_id": data.get("id"),
+                "name": data.get("name"),
+                "privacy": data.get("privacy"),
+                "enabled": bool(data.get("enable")),
+                "needs_login": "username" in fields,
+                "username": fields.get("username", {}).get("value") or "",
+                "disabled_till": state.get("disabledTill"),
+                "failing_since": state.get("initialFailure"),
+                "source": linked.get(data.get("id")),
+                "torznab_url": f"{base}/{data.get('id')}/api",
+            })
+        return result
+
+    @app.put("/admin/indexers/{indexer_id}/credentials")
+    def set_indexer_credentials(indexer_id: int, payload: Credentials):
+        base, _, key = prowlarr_gateway()
+        with prowlarr_client(base, key) as client:
+            found = client.get(f"/indexer/{indexer_id}")
+            if found.status_code == 404:
+                raise HTTPException(404, "Indexer not found")
+            data = found.raise_for_status().json()
+            if "username" not in {f.get("name") for f in data.get("fields", [])}:
+                raise HTTPException(400, "This source does not use a login")
+            for field in data["fields"]:
+                if field.get("name") == "username":
+                    field["value"] = payload.username
+                elif field.get("name") == "password" and payload.password:
+                    field["value"] = payload.password
+            # Without forceSave Prowlarr logs in to the site before saving,
+            # so wrong credentials are reported instead of stored.
+            response = client.put(f"/indexer/{indexer_id}", json=data)
+        if response.status_code >= 400:
+            try:
+                messages = [e.get("errorMessage") for e in response.json() if isinstance(e, dict)]
+            except (ValueError, TypeError):
+                messages = []
+            detail = "; ".join(m for m in messages if m)[:300] or f"Prowlarr HTTP {response.status_code}"
+            raise HTTPException(400, detail)
+        return {"saved": True}
+
     @app.get("/admin/config")
     def get_config():
         return config.snapshot()
@@ -191,6 +280,37 @@ def create_app(settings=None, db=None, seerr=None):
         except ValueError as exc:
             code = str(exc)
             raise HTTPException(409 if code == "CONFIG_CHANGED_RELOAD" else 422, code) from None
+
+    @app.post("/admin/indexers/{indexer_id}/attach")
+    def attach_indexer(indexer_id: int):
+        """Add a Prowlarr indexer as an aiarr Torznab source, reusing the gateway key."""
+        nonlocal settings, seerr
+        base, _, key = prowlarr_gateway()
+        with prowlarr_client(base, key) as client:
+            found = client.get(f"/indexer/{indexer_id}")
+            if found.status_code == 404:
+                raise HTTPException(404, "Indexer not found")
+            name = found.raise_for_status().json().get("name") or f"indexer{indexer_id}"
+        current = config.load()
+        url = f"{base}/{indexer_id}/api"
+        if any(p.url.rstrip("/") == url for p in current.providers):
+            raise HTTPException(409, "Already attached")
+        slug = (re.sub(r"[^a-z0-9_-]", "", name.lower().replace(".", "-").replace(" ", "-")) or "indexer")[:30]
+        taken = {p.name for p in current.providers}
+        candidate, n = slug if slug[0].isalpha() else "p" + slug, 2
+        while candidate in taken:
+            candidate, n = f"{slug}-{n}", n + 1
+        providers = plain(current.providers) + [{
+            "name": candidate, "protocol": "torznab", "url": url, "api_key": key, "trusted_gateway": True,
+        }]
+        try:
+            result = config.save(config.snapshot()["revision"], {"providers": providers})
+        except ValueError as exc:
+            raise HTTPException(422, str(exc)) from None
+        settings = config.load()
+        if not injected_seerr:
+            seerr = Seerr(settings)
+        return {"source": candidate, "revision": result["revision"]}
 
     @app.post("/admin/jobs/{job_id}/retry")
     def retry(job_id: int):

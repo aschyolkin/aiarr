@@ -120,6 +120,12 @@ class Database:
             self._cancel_if_no_active_seerr_request(conn, job_id, now)
             return re_open
 
+    def set_poster(self, job_id, path):
+        self.execute(
+            "UPDATE jobs SET work=json_set(work,'$.poster_path',:path) WHERE id=:id "
+            "AND json_extract(work,'$.poster_path') IS NULL", id=job_id, path=path,
+        )
+
     def cancel_from_admin(self, job_id):
         now = time.time()
         with self.engine.begin() as conn:

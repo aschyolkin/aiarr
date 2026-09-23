@@ -39,3 +39,25 @@ def test_order_detail_reports_live_torrent_progress(settings, db, movie, monkeyp
     assert data["download"] == {"progress": 0.375, "state": "downloading",
                                 "download_speed": 1048576, "eta": 180, "remaining_bytes": 1250000}
     assert "must-not-leak" not in str(data)
+
+
+def test_overview_hides_cancelled_and_keeps_poster(settings, db, movie):
+    from fastapi.testclient import TestClient
+
+    from mae.api import create_app
+
+    kept = db.submit(movie.model_copy(update={"poster_path": "/abc.jpg"}))
+    cancelled = db.submit(movie.model_copy(update={"external_id": 2}))
+    db.cancel_from_admin(cancelled)
+    client = TestClient(create_app(settings, db))
+    client.headers["X-Api-Key"] = settings.api_key.get_secret_value()
+    jobs = client.get("/admin/overview").json()["jobs"]
+    assert [job["id"] for job in jobs] == [kept]
+    assert '"poster_path":"/abc.jpg"' in jobs[0]["work"]
+
+
+def test_poster_backfill_only_fills_missing(db, movie):
+    job_id = db.submit(movie)
+    db.set_poster(job_id, "/first.jpg")
+    db.set_poster(job_id, "/second.jpg")
+    assert '"/first.jpg"' in db.job(job_id)["work"]

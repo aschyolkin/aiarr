@@ -27,6 +27,12 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 .cand tr.chosen td{background:#065f4666}.cand .pct{white-space:nowrap;font-weight:600}.cand .title{overflow-wrap:anywhere;min-width:14rem}
 .cand td.mono{font-family:ui-monospace,monospace;font-size:.85rem}
 .cand img{width:64px;max-height:96px;object-fit:cover;border-radius:.3rem;display:block}
+nav.top{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin-bottom:1rem}nav.top .spacer{flex:1}
+nav.top a{padding:.45rem .8rem;border-radius:.4rem;text-decoration:none;color:#e5e7eb;background:#1f2937;border:1px solid #374151}
+nav.top a.active{background:#4338ca;border-color:#6366f1}
+.card{display:flex;gap:.8rem;align-items:flex-start}.card .body{flex:1;min-width:0}
+.poster{width:72px;height:108px;flex:none;border-radius:.4rem;background:#374151 center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#6b7280}
+.login{display:flex;flex-wrap:wrap;gap:.25rem;align-items:center}.login input{width:9rem}
 </style>
 <h1>aiarr</h1><p>Очередь, доказательства выбора и диагностика импорта</p>
 <div id="login" hidden><p>Войдите в Seerr под администратором в этом браузере и обновите страницу.</p>
@@ -34,17 +40,48 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <label>API-ключ <input id="key" type="password" autocomplete="off" required></label><button>Войти</button></form></details></div>
 <p id="status" role="status"></p>
 <main id="dashboard" hidden>
-<button id="refresh">Обновить</button><button id="logout">Выйти</button>
-<p id="mode"></p>
-<section><div id="jobs" class="cards"></div></section>
-<details open><summary>Источники поиска</summary><p id="sources-summary" class="hint"></p>
+<nav class="top"><span id="mode" class="muted"></span><span class="spacer"></span>
+<a href="#jobs" data-page="jobs">Заявки</a><a href="#sources" data-page="sources">Источники</a>
+<a href="#settings" data-page="settings">⚙ Настройки</a>
+<button id="refresh" type="button">Обновить</button><button id="logout" type="button">Выйти</button></nav>
+<section id="page-jobs" class="page">
+<div id="jobs" class="cards"></div>
+<section id="inspection" hidden><h2 id="job-title"></h2>
+<p id="job-summary" class="summary"></p><div id="download-panel" hidden>
+<label for="download-progress">Загрузка: <span id="download-text"></span></label>
+<progress id="download-progress" class="progress" max="100" value="0"></progress></div>
+<h3>Ход заказа</h3><ol id="timeline" class="timeline"></ol>
+<div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
+<button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
+<p class="hint">Отмена в aiarr и пропажа файла из Jellyfin удаляют закачку из qBittorrent (уже добавленные в библиотеку файлы не трогаются — это отдельная жёсткая ссылка). Удаление заявки в Seerr удаляет ещё и файлы этой заявки, после проверки владельца.</p>
+<details open><summary>Кандидаты и причины выбора</summary><p id="cand-summary" class="hint"></p>
+<section><table class="cand"><thead><tr><th></th><th>Релиз</th><th>Источник</th><th>Качество</th><th>Кодек</th><th>Размер</th>
+<th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section></details>
+<details><summary>Технические подробности</summary>
+<details><summary>Кандидаты, evidence и причины выбора (JSON)</summary><pre id="decision"></pre></details>
+<details><summary>Выбранный релиз</summary><pre id="candidate"></pre></details>
+<details><summary>События и импорт</summary><pre id="history"></pre></details></details>
+</section>
+<details><summary>Профиль качества</summary><pre id="profiles"></pre></details>
+<details><summary>Метрики</summary><pre id="metrics"></pre></details>
+</section>
+<form id="config-form">
+<section id="page-sources" class="page" hidden><h2>Источники поиска</h2>
+<p id="sources-summary" class="hint"></p>
+<h3>Трекеры и студии</h3>
+<section><table class="cand"><thead><tr><th>Источник</th><th>Как ищем</th><th>Состояние</th><th>Вход</th></tr></thead>
+<tbody id="known-sources"></tbody></table></section>
+<p class="hint">Логин и пароль RuTracker.org и Kinozal.tv хранятся в Prowlarr: aiarr передаёт их туда, Prowlarr сразу проверяет вход на сайте. Пароль после сохранения не показывается.</p>
+<h3>Подключённые к aiarr</h3>
 <section><table class="cand"><thead><tr><th>Имя</th><th>Протокол</th><th>Адрес</th><th>Доступ</th>
 <th>Карточка релиза</th><th>Интервал, сек</th></tr></thead><tbody id="sources"></tbody></table></section>
-<p class="hint">Добавить или изменить источник — в «Настройки aiarr» → «Источники релизов» ниже.</p></details>
-<details><summary>Профиль качества</summary><pre id="profiles"></pre></details>
-<details id="config-panel"><summary>Настройки aiarr</summary>
+<fieldset><legend>Источники релизов</legend>
+<p class="hint">Анонимный трекер: оставьте ключ и Cookie пустыми. Для Torznab/Prowlarr укажите API-ключ; для закрытой карточки источника укажите Cookie и хост карточки.</p>
+<div id="provider-list"></div><button id="add-provider" type="button">Добавить источник</button></fieldset>
+<button type="submit">Сохранить источники</button>
+</section>
+<section id="page-settings" class="page" hidden><h2>Настройки aiarr</h2>
 <p class="hint">Изменения сохраняются в состоянии aiarr и применяются к новым попыткам обработки. Пустые поля ключей сохраняют прежние значения.</p>
-<form id="config-form">
 <fieldset><legend>Качество</legend><div class="grid">
 <label class="field">Название профиля<input id="policy-version" required></label>
 <label class="field">Максимальный размер, ГиБ<input id="policy-size" type="number" min="1" step="1" required></label>
@@ -55,9 +92,6 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <p class="hint">Источник без явной метки CAM/TS/TC (например «Hybrid» или вообще без пометки) принимается к рассмотрению, а не отбрасывается. Отбрасываются только явные экранки и телесинк/телесине.</p>
 <label class="field">Запрещённые источники (JSON-список)<textarea id="policy-denied-sources"></textarea></label>
 <label class="field">Приоритеты студий (JSON)<textarea id="policy-studios"></textarea></label></fieldset>
-<fieldset><legend>Источники релизов</legend>
-<p class="hint">Анонимный трекер: оставьте ключ и Cookie пустыми. Для Torznab/Prowlarr укажите API-ключ; для закрытой карточки источника укажите Cookie и хост карточки.</p>
-<div id="provider-list"></div><button id="add-provider" type="button">Добавить источник</button></fieldset>
 <fieldset><legend>Подключения</legend><div class="grid">
 <label class="field">qBittorrent URL<input id="qbit_url" type="url"></label>
 <label class="field">qBittorrent пользователь<input id="qbit_username"></label>
@@ -81,24 +115,10 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <label class="field">Токенов DeepSeek на запрос<input id="deepseek_request_tokens" type="number" min="0"></label>
 </div></fieldset>
 <button type="submit">Сохранить настройки</button><button id="reload-config" type="button">Отменить изменения</button>
-<p id="config-status" role="status"></p></form></details>
-<details><summary>Метрики</summary><pre id="metrics"></pre></details>
-<section id="inspection" hidden><h2 id="job-title"></h2>
-<p id="job-summary" class="summary"></p><div id="download-panel" hidden>
-<label for="download-progress">Загрузка: <span id="download-text"></span></label>
-<progress id="download-progress" class="progress" max="100" value="0"></progress></div>
-<h3>Ход заказа</h3><ol id="timeline" class="timeline"></ol>
-<div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
-<button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
-<p class="hint">Отмена в aiarr и пропажа файла из Jellyfin удаляют закачку из qBittorrent (уже добавленные в библиотеку файлы не трогаются — это отдельная жёсткая ссылка). Удаление заявки в Seerr удаляет ещё и файлы этой заявки, после проверки владельца.</p>
-<details open><summary>Кандидаты и причины выбора</summary><p id="cand-summary" class="hint"></p>
-<section><table class="cand"><thead><tr><th></th><th>Релиз</th><th>Источник</th><th>Качество</th><th>Кодек</th><th>Размер</th>
-<th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section></details>
-<details><summary>Технические подробности</summary>
-<details><summary>Кандидаты, evidence и причины выбора (JSON)</summary><pre id="decision"></pre></details>
-<details><summary>Выбранный релиз</summary><pre id="candidate"></pre></details>
-<details><summary>События и импорт</summary><pre id="history"></pre></details></details>
-</section></main>
+</section>
+<p id="config-status" role="status"></p>
+</form>
+</main>
 <script>
 'use strict';
 let token='', signedIn=false, selected=null, busy=false, config=null;
@@ -109,7 +129,7 @@ function clearSession(){
  token='';signedIn=false;selected=null;config=null;byId('key').value='';byId('dashboard').hidden=true;
  byId('inspection').hidden=true;byId('login').hidden=false;
  byId('provider-list').replaceChildren();byId('config-form').reset();
- for(const id of ['jobs','sources','profiles','metrics','decision','candidate','history','mode','job-title'])byId(id).textContent='';
+ for(const id of ['jobs','sources','known-sources','profiles','metrics','decision','candidate','history','mode','job-title'])byId(id).textContent='';
 }
 async function api(path,method='GET',body=null){
  const headers={'X-Aiarr-UI':'1'};if(token)headers['X-Api-Key']=token;
@@ -349,6 +369,59 @@ function renderSources(sources){
   body.append(tr);
  }
 }
+const KNOWN=[
+ {name:'RuTracker.org',match:/rutracker/i,how:'Prowlarr'},
+ {name:'Rutor',match:/rutor/i,how:'Prowlarr или протокол rutor в aiarr'},
+ {name:'Kinozal.tv',match:/kinozal/i,how:'Prowlarr'},
+ {name:'NNM-Club',match:/nnm|noname/i,how:'протокол nnmclub в aiarr или Prowlarr'},
+ {name:'NewStudio',match:/newstudio/i,how:'Prowlarr, только сериалы'},
+ {name:'LostFilm.tv',studio:true},{name:'AlexFilm',studio:true},
+ {name:'Red Head Sound',studio:true},{name:'Flarrow Films',studio:true}];
+const when=value=>value?new Date(value).toLocaleString('ru-RU'):'';
+function renderKnownSources(sources,indexers){
+ const body=byId('known-sources');body.replaceChildren();
+ for(const k of KNOWN){
+  const tr=document.createElement('tr');
+  const idx=k.match&&indexers.find(i=>k.match.test(i.name||''));
+  const provider=k.match&&sources.find(s=>(idx&&s.name===idx.source)||k.match.test(s.name+' '+s.url));
+  let state;
+  if(k.studio)state='✔ распознаётся по названию озвучки в раздачах с трекеров';
+  else if(!provider&&!idx)state='— нет ни в aiarr, ни в Prowlarr';
+  else if(idx?.disabled_till&&new Date(idx.disabled_till)>new Date())
+   state='⚠ Prowlarr отключил из-за ошибок до '+when(idx.disabled_till)+' (ошибки с '+when(idx.failing_since)+')'+
+    (provider?'':'; в aiarr не подключён');
+  else if(!provider)state='есть в Prowlarr, в aiarr не подключён';
+  else state='✔ ищем';
+  const login=document.createElement('td');const box=document.createElement('div');box.className='login';
+  if(idx?.needs_login){
+   const user=document.createElement('input');user.placeholder='логин';user.value=idx.username||'';user.autocomplete='off';
+   const pass=document.createElement('input');pass.type='password';pass.placeholder=idx.username?'пароль (не менять)':'пароль';
+   pass.autocomplete='new-password';
+   const save=document.createElement('button');save.type='button';save.textContent='Проверить и сохранить';
+   save.onclick=()=>run(async()=>{await api('/admin/indexers/'+idx.indexer_id+'/credentials','PUT',
+    {username:user.value.trim(),password:pass.value});pass.value='';await refresh();
+    byId('config-status').textContent='Вход '+k.name+' проверен и сохранён в Prowlarr.';});
+   box.append(user,pass,save);
+  }else if(!k.studio&&(provider||idx))box.append('вход не нужен');
+  if(idx&&!provider){const attach=document.createElement('button');attach.type='button';attach.textContent='Подключить к aiarr';
+   attach.onclick=()=>run(async()=>{if(!confirm('Подключить '+k.name+' как источник поиска?'))return;
+    await api('/admin/indexers/'+idx.indexer_id+'/attach','POST');config=null;await refresh();
+    byId('config-status').textContent=k.name+' подключён. Worker начнёт искать в нём в течение 10 секунд.';});
+   box.append(attach);}
+  login.append(box);
+  for(const v of [k.name,k.studio?'—':k.how,state]){const td=document.createElement('td');td.textContent=v;tr.append(td);}
+  tr.append(login);body.append(tr);
+ }
+ const active=KNOWN.filter(k=>k.match&&sources.some(s=>k.match.test(s.name+' '+s.url))).length;
+ byId('sources-summary').textContent='Поиск раздач идёт по '+sources.length+' подключённым источникам aiarr. '+
+  'Из списка трекеров подключено '+active+' из 5; четыре студии озвучки распознаются в найденных раздачах.';
+}
+function route(){
+ const page=['jobs','sources','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'jobs';
+ for(const name of ['jobs','sources','settings'])byId('page-'+name).hidden=name!==page;
+ for(const a of document.querySelectorAll('nav.top a'))a.classList.toggle('active',a.dataset.page===page);
+}
+window.addEventListener('hashchange',route);
 async function refresh(){
  const [overview,sources,profiles,metrics]=await Promise.all([
   api('/admin/overview'),api('/admin/sources'),api('/admin/profiles'),api('/admin/metrics')]);
@@ -357,19 +430,27 @@ async function refresh(){
  if(!overview.jobs.length)byId('jobs').textContent='Заявок пока нет.';
  for(const job of overview.jobs){
   const work=parse(job.work)||{},card=document.createElement('button');card.type='button';card.className='card';
+  const cover=document.createElement('div');cover.className='poster';
+  const src=/^[/][A-Za-z0-9_.-]+$/.test(work.poster_path||'')?'https://image.tmdb.org/t/p/w185'+work.poster_path:
+   /^https:/.test(job.image_url||'')?job.image_url:null;
+  if(src){const img=document.createElement('img');img.src=src;img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';
+   img.style.cssText='width:100%;height:100%;object-fit:cover;border-radius:.4rem';img.onerror=()=>{img.remove();cover.textContent='🎬';};
+   cover.append(img);}else cover.textContent='🎬';
+  const body=document.createElement('div');body.className='body';card.append(cover,body);
   const h=document.createElement('h3');h.textContent=(work.title||'Без названия')+(work.year?' ('+work.year+')':'');
   const badge=document.createElement('span');badge.className='badge '+(tone[job.state]||'');badge.textContent=labelState(job.state);
-  card.append(h,badge);
+  body.append(h,badge);
   const lines=[work.kind==='series'?'Сериал':'Фильм'];
   if(work.kind==='series'&&job.wanted)lines.push('готово '+job.ready+' из '+job.wanted+' серий');
   if(job.reason)lines.push(labelReason(job.reason));
-  const p=document.createElement('p');p.className='muted';p.textContent=lines.join(' · ');card.append(p);
+  const p=document.createElement('p');p.className='muted';p.textContent=lines.join(' · ');body.append(p);
   if(typeof job.progress==='number'&&job.state==='DOWNLOADING'){const bar=document.createElement('progress');
-   bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';card.append(bar);}
+   bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';body.append(bar);}
   card.onclick=()=>run(()=>inspect(job.id));byId('jobs').append(card);
  }
  renderSources(sources);show('profiles',profiles);show('metrics',metrics);
  if(config===null){config=await api('/admin/config');renderConfig();}
+ renderKnownSources(sources,await api('/admin/indexers').catch(()=>[]));
  if(selected!==null)await inspect(selected);
 }
 async function run(action){
@@ -379,7 +460,7 @@ async function run(action){
  finally{busy=false;byId('logout').disabled=false;}
 }
 async function enter(){const who=await api('/admin/session');await refresh();signedIn=true;
- byId('login').hidden=true;byId('dashboard').hidden=false;
+ byId('login').hidden=true;byId('dashboard').hidden=false;route();
  byId('status').textContent=who.mode==='seerr'?'Вход через Seerr: '+who.name:'Вход по API-ключу';}
 byId('key-login').onsubmit=event=>{event.preventDefault();run(async()=>{
  token=byId('key').value;byId('key').value='';await enter();});};
