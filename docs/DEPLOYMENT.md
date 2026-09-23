@@ -43,6 +43,20 @@ sources, update API keys or Cookies, quality, DeepSeek key and queue limits.
 Blank secret fields preserve their current values. Settings are saved in the
 private state dataset and loaded by the worker within ten seconds. The API key,
 media paths and dry-run switch remain in the TrueNAS app configuration.
+**Кнопка Web UI в Application Info.** TrueNAS 25.10 не строит portals для
+custom-приложений (`crud.py`: только при `custom_app is False`). В compose aiarr
+есть `x-portals` (Web UI → `http://10.110.111.2:30280/admin`); после
+установки/переустановки приложения один раз заполнить metadata тем же кодом
+TrueNAS (бэкап `metadata.yaml` рядом):
+
+```
+sudo python3 -c "from middlewared.plugins.apps.ix_apps.metadata import update_app_metadata_for_portals as f; f('aiarr', '1.0.0')"
+sudo midclt call -j app.metadata.generate
+```
+
+Обычный `app.update` (смена тега образа) и stop/start кнопку не сбрасывают
+(проверено 2026-09-24).
+
 TrueNAS detected 25.10.7; its [Custom App documentation](https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/installcustomappscreens/)
 supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 
