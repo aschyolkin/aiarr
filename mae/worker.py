@@ -260,7 +260,11 @@ class Worker:
             torrent_hash, size, files = self.downloader.magnet_preflight(url, work.kind)
             raw = None
         else:
-            raw = provider.http.get(url, max_bytes=2_000_000)
+            raw = provider.http.get(
+                url, max_bytes=2_000_000,
+                allowed_redirect=("bulk.nnmclub.to", "/download.php")
+                if provider.config.protocol == "nnmclub" else None,
+            )
             torrent_hash, size, files = torrent_metadata(raw)
         # qBittorrent metadata is still untrusted provider input. Validate every
         # path before a metadata-preflighted magnet can be resumed.

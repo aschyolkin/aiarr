@@ -1,3 +1,5 @@
+import socket
+
 import httpx
 import pytest
 
@@ -81,6 +83,34 @@ def test_redirect_not_followed(respx_mock):
     )
     with pytest.raises(ProviderError):
         provider().healthcheck()
+    assert len(respx_mock.calls) == 1
+
+
+def test_nnm_bulk_redirect_is_one_exact_https_hop(respx_mock, monkeypatch):
+    monkeypatch.setattr(socket, "getaddrinfo", lambda *_args, **_kwargs: [
+        (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
+    ])
+    start = "https://nnmclub.to/forum/download.php?id=7"
+    bulk = "https://bulk.nnmclub.to/download.php?csid=private&uid=1&id=7"
+    respx_mock.get(start).mock(return_value=httpx.Response(302, headers={"Location": bulk}))
+    respx_mock.get("https://93.184.216.34/download.php").mock(return_value=httpx.Response(200, content=b"torrent"))
+    http = SafeHTTP("https://nnmclub.to")
+    assert http.get(start, allowed_redirect=("bulk.nnmclub.to", "/download.php")) == b"torrent"
+    assert len(respx_mock.calls) == 2
+
+
+@pytest.mark.parametrize("location", [
+    "http://bulk.nnmclub.to/download.php?id=7",
+    "https://bulk.nnmclub.to/other.php?id=7",
+    "https://elsewhere.example/download.php?id=7",
+    "https://bulk.nnmclub.to:444/download.php?id=7",
+])
+def test_nnm_bulk_redirect_rejects_other_targets(respx_mock, location):
+    start = "https://nnmclub.to/forum/download.php?id=7"
+    respx_mock.get(start).mock(return_value=httpx.Response(302, headers={"Location": location}))
+    with pytest.raises(ProviderError) as error:
+        SafeHTTP("https://nnmclub.to").get(start, allowed_redirect=("bulk.nnmclub.to", "/download.php"))
+    assert error.value.outcome == Outcome.ACCESS_DENIED
     assert len(respx_mock.calls) == 1
 
 

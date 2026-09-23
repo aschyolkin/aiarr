@@ -56,7 +56,7 @@ class SafeHTTP:
     def __init__(self, trusted_origin=None):
         self.trusted_origin = origin(trusted_origin) if trusted_origin else None
 
-    def get(self, url, *, params=None, headers=None, max_bytes=2_000_000):
+    def get(self, url, *, params=None, headers=None, max_bytes=2_000_000, allowed_redirect=None):
         p = urlsplit(url)
         if p.scheme not in {"https", "http"} or not p.hostname or p.username or p.password:
             raise ProviderError(Outcome.ACCESS_DENIED)
@@ -101,6 +101,25 @@ class SafeHTTP:
                     if code in (401, 403):
                         raise ProviderError(Outcome.AUTH_REQUIRED if code == 401 else Outcome.ACCESS_DENIED)
                     if 300 <= code < 400:
+                        location = response.headers.get("Location", "")
+                        try:
+                            target = urlsplit(location)
+                        except ValueError:
+                            raise ProviderError(Outcome.ACCESS_DENIED) from None
+                        if (
+                            allowed_redirect
+                            and code in (301, 302, 303, 307, 308)
+                            and len(location) <= 2048
+                            and target.scheme == "https"
+                            and target.hostname == allowed_redirect[0]
+                            and target.path == allowed_redirect[1]
+                            and target.port in (None, 443)
+                            and not target.username
+                            and not target.password
+                            and not target.fragment
+                        ):
+                            # One exact HTTPS hop; the next response may not redirect.
+                            return self.get(location, max_bytes=max_bytes)
                         raise ProviderError(Outcome.ACCESS_DENIED)
                     if code >= 400:
                         raise ProviderError(Outcome.TEMPORARY_FAILURE)
