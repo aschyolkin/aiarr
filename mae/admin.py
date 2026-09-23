@@ -377,6 +377,7 @@ const KNOWN=[
  {name:'NewStudio',match:/newstudio/i,how:'Prowlarr, только сериалы'},
  {name:'LostFilm.tv',studio:true},{name:'AlexFilm',studio:true},
  {name:'Red Head Sound',studio:true},{name:'Flarrow Films',studio:true}];
+const loginChecks={};
 const when=value=>value?new Date(value).toLocaleString('ru-RU'):'';
 function renderKnownSources(sources,indexers){
  const body=byId('known-sources');body.replaceChildren();
@@ -398,10 +399,15 @@ function renderKnownSources(sources,indexers){
    const pass=document.createElement('input');pass.type='password';pass.placeholder=idx.username?'пароль (не менять)':'пароль';
    pass.autocomplete='new-password';
    const save=document.createElement('button');save.type='button';save.textContent='Проверить и сохранить';
-   save.onclick=()=>run(async()=>{await api('/admin/indexers/'+idx.indexer_id+'/credentials','PUT',
-    {username:user.value.trim(),password:pass.value});pass.value='';await refresh();
-    byId('config-status').textContent='Вход '+k.name+' проверен и сохранён в Prowlarr.';});
-   box.append(user,pass,save);
+   const mark=document.createElement('span');const check=loginChecks[idx.indexer_id];
+   if(check){mark.textContent=check.ok?'✅ вход проверен':'❌ '+check.error;mark.title=check.at;}
+   save.onclick=()=>run(async()=>{
+    mark.textContent='⏳ проверяем вход на сайте…';
+    try{await api('/admin/indexers/'+idx.indexer_id+'/credentials','PUT',{username:user.value.trim(),password:pass.value});
+     loginChecks[idx.indexer_id]={ok:true,at:new Date().toLocaleString('ru-RU')};}
+    catch(error){loginChecks[idx.indexer_id]={ok:false,error:error.message,at:new Date().toLocaleString('ru-RU')};}
+    pass.value='';await refresh();});
+   box.append(user,pass,save,mark);
   }else if(!k.studio&&(provider||idx))box.append('вход не нужен');
   if(idx&&!provider){const attach=document.createElement('button');attach.type='button';attach.textContent='Подключить к aiarr';
    attach.onclick=()=>run(async()=>{if(!confirm('Подключить '+k.name+' как источник поиска?'))return;

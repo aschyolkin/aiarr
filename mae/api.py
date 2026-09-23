@@ -40,8 +40,8 @@ def prowlarr(provider):
     return match[1], int(match[2]), provider.api_key.get_secret_value()
 
 
-def prowlarr_client(base, key):
-    return httpx.Client(base_url=base + "/api/v1", headers={"X-Api-Key": key}, timeout=90, trust_env=False)
+def prowlarr_client(base, key, timeout=90):
+    return httpx.Client(base_url=base + "/api/v1", headers={"X-Api-Key": key}, timeout=timeout, trust_env=False)
 
 
 def create_app(settings=None, db=None, seerr=None):
@@ -240,7 +240,8 @@ def create_app(settings=None, db=None, seerr=None):
     @app.put("/admin/indexers/{indexer_id}/credentials")
     def set_indexer_credentials(indexer_id: int, payload: Credentials):
         base, _, key = prowlarr_gateway()
-        with prowlarr_client(base, key) as client:
+        # A login behind CloudFlare goes through FlareSolverr and can take minutes.
+        with prowlarr_client(base, key, timeout=400) as client:
             found = client.get(f"/indexer/{indexer_id}")
             if found.status_code == 404:
                 raise HTTPException(404, "Indexer not found")
@@ -254,7 +255,10 @@ def create_app(settings=None, db=None, seerr=None):
                     field["value"] = payload.password
             # Without forceSave Prowlarr logs in to the site before saving,
             # so wrong credentials are reported instead of stored.
-            response = client.put(f"/indexer/{indexer_id}", json=data)
+            try:
+                response = client.put(f"/indexer/{indexer_id}", json=data)
+            except httpx.TimeoutException:
+                raise HTTPException(504, "Сайт не ответил на проверку входа за 400 секунд") from None
         if response.status_code >= 400:
             try:
                 messages = [e.get("errorMessage") for e in response.json() if isinstance(e, dict)]
