@@ -86,12 +86,13 @@ def test_redirect_not_followed(respx_mock):
     assert len(respx_mock.calls) == 1
 
 
-def test_nnm_bulk_redirect_is_one_exact_https_hop(respx_mock, monkeypatch):
+@pytest.mark.parametrize("prefix", ["//", "https://"])
+def test_nnm_bulk_redirect_is_one_exact_https_hop(respx_mock, monkeypatch, prefix):
     monkeypatch.setattr(socket, "getaddrinfo", lambda *_args, **_kwargs: [
         (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("93.184.216.34", 443))
     ])
     start = "https://nnmclub.to/forum/download.php?id=7"
-    bulk = "https://bulk.nnmclub.to/download.php?csid=private&uid=1&id=7"
+    bulk = prefix + "bulk.nnmclub.to/download.php?csid=private&uid=1&id=7"
     respx_mock.get(start).mock(return_value=httpx.Response(302, headers={"Location": bulk}))
     respx_mock.get("https://93.184.216.34/download.php").mock(return_value=httpx.Response(200, content=b"torrent"))
     http = SafeHTTP("https://nnmclub.to")

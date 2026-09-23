@@ -102,6 +102,8 @@ class SafeHTTP:
                         raise ProviderError(Outcome.AUTH_REQUIRED if code == 401 else Outcome.ACCESS_DENIED)
                     if 300 <= code < 400:
                         location = response.headers.get("Location", "")
+                        if location.startswith("//"):
+                            location = "https:" + location
                         try:
                             target = urlsplit(location)
                         except ValueError:
