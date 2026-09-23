@@ -86,7 +86,7 @@ def create_app(settings=None, db=None, seerr=None):
             "Referrer-Policy": "no-referrer",
             "X-Content-Type-Options": "nosniff",
             "Content-Security-Policy": (
-                "default-src 'none'; connect-src 'self'; style-src 'unsafe-inline'; "
+                "default-src 'none'; connect-src 'self'; img-src https:; style-src 'unsafe-inline'; "
                 f"script-src 'sha256-{digest}'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
             ),
         })

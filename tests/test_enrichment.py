@@ -115,3 +115,18 @@ def test_trusted_source_is_explicit_and_exact_origin(respx_mock):
     with pytest.raises(ProviderError) as error:
         HTMLDetailsEnricher(config).fetch_details(wrong_scheme)
     assert error.value.outcome == Outcome.ACCESS_DENIED
+
+
+def test_card_image_picks_first_poster_and_skips_decorations():
+    from bs4 import BeautifulSoup
+
+    from mae.enrichment import card_image
+
+    html = (
+        '<div><img src="/images/smiles/1.gif"><img src="https://x.test/icon.png" width="16">'
+        '<var class="postImg" title="https://img.test/poster.jpg"></var>'
+        '<img src="https://img.test/second.jpg"></div>'
+    )
+    assert card_image(BeautifulSoup(html, "html.parser"), "https://nnm.test/t?1") == "https://img.test/poster.jpg"
+    assert card_image(BeautifulSoup('<img src="http://plain.test/a.jpg">', "html.parser"), "https://a.test/") is None
+    assert card_image(BeautifulSoup('<img src="javascript:alert(1)">', "html.parser"), "https://a.test/") is None

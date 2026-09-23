@@ -9,7 +9,7 @@ from defusedxml import ElementTree
 
 from mae.config import ProviderConfig
 from mae.domain import DownloadHandle, Evidence, Outcome, ProviderError, ReleaseDetails, SearchResult
-from mae.enrichment import HTMLDetailsEnricher, RutorDetailsEnricher
+from mae.enrichment import HTMLDetailsEnricher, RutorDetailsEnricher, card_image
 from mae.security import SafeHTTP, clean_text
 
 
@@ -112,9 +112,12 @@ class TorznabProvider:
             evidence.append(
                 Evidence(id="description", text=self.descriptions[release.release_id], method="torznab")
             )
+        image_url = None
         if self.enricher:
-            evidence.extend(self.enricher.fetch_details(release).evidence)
-        return ReleaseDetails(evidence=evidence)
+            enriched = self.enricher.fetch_details(release)
+            evidence.extend(enriched.evidence)
+            image_url = enriched.image_url
+        return ReleaseDetails(evidence=evidence, image_url=image_url)
 
     def fetch_file_list(self, release):
         if isinstance(self.enricher, RutorDetailsEnricher):
@@ -250,7 +253,10 @@ class NNMClubProvider:
         text = clean_text(str(card))
         if not text:
             raise ProviderError(Outcome.PARSER_BROKEN)
-        return ReleaseDetails(evidence=[Evidence(id="card", text=text, method="nnmclub-card-v2")])
+        return ReleaseDetails(
+            evidence=[Evidence(id="card", text=text, method="nnmclub-card-v2")],
+            image_url=card_image(card, release.details_url),
+        )
 
     def fetch_file_list(self, release):
         raise ProviderError(Outcome.UNSUPPORTED_CAPABILITY)

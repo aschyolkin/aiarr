@@ -25,6 +25,7 @@ def parse_candidate(release, details):
         release=release,
         parsed=parsed,
         evidence=[Evidence(id="title", text=release.title, method="guessit-4.4.0"), *details.evidence],
+        image_url=details.image_url,
     )
     # Only explicitly scoped audio evidence; MULTI/RUS title suffix is insufficient.
     card_codecs = set()

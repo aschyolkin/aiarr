@@ -23,6 +23,9 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 .badge{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600;background:#374151}
 .ok{background:#065f46}.work{background:#3730a3}.warn{background:#92400e}.bad{background:#991b1b}
 .muted{color:#9ca3af;font-size:.9rem;margin:.4rem 0 0}
+.cand{font-size:.9rem}.cand td,.cand th{padding:.45rem;vertical-align:top}.cand tr.fit td{background:#064e3b33}
+.cand tr.chosen td{background:#065f4666}.cand .pct{white-space:nowrap;font-weight:600}.cand .title{overflow-wrap:anywhere;min-width:14rem}
+.cand img{width:64px;max-height:96px;object-fit:cover;border-radius:.3rem;display:block}
 </style>
 <h1>aiarr</h1><p>Очередь, доказательства выбора и диагностика импорта</p>
 <div id="login" hidden><p>Войдите в Seerr под администратором в этом браузере и обновите страницу.</p>
@@ -82,8 +85,11 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
 <button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
 <p class="hint">Отмена в aiarr сохраняет торрент и файлы. Удаление заявки в Seerr удаляет файлы и торрент этой заявки после проверки владельца.</p>
+<details open><summary>Кандидаты и причины выбора</summary><p id="cand-summary" class="hint"></p>
+<section><table class="cand"><thead><tr><th></th><th>Релиз</th><th>Источник</th><th>Качество</th><th>Кодек</th><th>Размер</th>
+<th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section></details>
 <details><summary>Технические подробности</summary>
-<details><summary>Кандидаты, evidence и причины выбора</summary><pre id="decision"></pre></details>
+<details><summary>Кандидаты, evidence и причины выбора (JSON)</summary><pre id="decision"></pre></details>
 <details><summary>Выбранный релиз</summary><pre id="candidate"></pre></details>
 <details><summary>События и импорт</summary><pre id="history"></pre></details></details>
 </section></main>
@@ -205,6 +211,57 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
  LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
  NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
+const candidateReasons={IDENTITY_MISMATCH:'другое название',YEAR_UNVERIFIED:'год не совпадает или не указан',
+ NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
+ SOURCE_NOT_ALLOWED:'источник видео не разрешён',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
+ CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',
+ desired_episode_coverage:'неизвестен список серий',compatible_video_codec:'кодек не подтверждён',
+ size:'размер неизвестен',russian_audio:'русская дорожка не подтверждена',
+ llm_interpretation_requires_review:'данные только от DeepSeek — нужна ручная проверка'};
+const CHECKS=['IDENTITY_MISMATCH','YEAR_OR_SEASON','SOURCE_NOT_ALLOWED','RESOLUTION_NOT_ALLOWED',
+ 'compatible_video_codec','size','russian_audio'];
+function candidatePercent(c){
+ const bad=new Set([...(c.reasons||[]),...(c.unknown||[])]);
+ if(bad.has('YEAR_UNVERIFIED')||bad.has('SEASON_MISMATCH')||bad.has('EPISODE_MISMATCH')||bad.has('NOT_A_MOVIE'))bad.add('YEAR_OR_SEASON');
+ if(bad.has('TOO_LARGE'))bad.add('size');if(bad.has('CODEC_EVIDENCE_CONFLICT'))bad.add('compatible_video_codec');
+ return Math.round(100*CHECKS.filter(x=>!bad.has(x)).length/CHECKS.length);
+}
+const sizeText=b=>typeof b==='number'?(b/1073741824).toFixed(b>=10737418240?0:1)+' ГиБ':'—';
+const scoreOf=c=>Object.values(c.score||{}).reduce((n,v)=>n+v,0);
+function renderCandidates(decision,chosen){
+ const list=(decision?.candidates||[]).map(c=>({c,fit:!c.reasons?.length&&!c.unknown?.length,pct:candidatePercent(c)}));
+ list.sort((a,b)=>(b.fit-a.fit)||(scoreOf(b.c)-scoreOf(a.c))||(b.pct-a.pct));
+ const body=byId('candidates');body.replaceChildren();
+ const chosenId=chosen?.release?chosen.release.provider+':'+chosen.release.release_id:null;
+ const fits=list.filter(x=>x.fit).length;
+ byId('cand-summary').textContent=list.length?'Проверено '+list.length+' релизов, подходят '+fits+
+  '. Процент — доля пройденных проверок: название, год/сезон, источник, разрешение, кодек, размер, русская дорожка.'
+  :'Кандидатов пока нет.';
+ for(const {c,fit,pct} of list){
+  const r=c.release||{},p=c.parsed||{},claims=c.claims||[];
+  const tr=document.createElement('tr');const isChosen=chosenId===r.provider+':'+r.release_id;
+  tr.className=isChosen?'chosen':fit?'fit':'';
+  const audio=[...new Set(claims.filter(x=>x.field==='audio_language').map(x=>x.value==='rus'?'русская':x.value))];
+  const studios=[...new Set(claims.filter(x=>x.field==='studio').map(x=>x.value))];
+  const codec=p.video_codec||claims.find(x=>x.field==='video_codec')?.value;
+  const problems=[...(c.reasons||[]),...(c.unknown||[])].map(x=>candidateReasons[x]||x);
+  const verdict=isChosen?'✅ Выбран · '+scoreOf(c)+' баллов':fit?'✔ Подходит · '+scoreOf(c)+' баллов':'✖ '+problems.join('; ');
+  const cells=[r.title||'',r.provider||'',[p.screen_size,p.source].filter(Boolean).join(' · ')||'—',codec||'—',
+   sizeText(r.size),r.seeders??'—',[...audio,...studios].join(', ')||'—'];
+  const pic=document.createElement('td');
+  if(c.image_url&&/^https:/.test(c.image_url)){const img=document.createElement('img');img.src=c.image_url;
+   img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>img.remove();pic.append(img);}
+  tr.append(pic);
+  cells.forEach((value,i)=>{const td=document.createElement('td');td.textContent=String(value);
+   if(i===0){td.className='title';if(r.details_url&&/^https?:/.test(r.details_url)){td.textContent='';
+    const a=document.createElement('a');a.href=r.details_url;a.target='_blank';a.rel='noopener noreferrer';
+    a.textContent=r.title;td.append(a);}}
+   tr.append(td);});
+  const td=document.createElement('td');const pctEl=document.createElement('div');pctEl.className='pct';
+  pctEl.textContent=pct+'%';const note=document.createElement('div');note.textContent=verdict;td.append(pctEl,note);
+  tr.append(td);body.append(tr);
+ }
+}
 const labelState=value=>states[value]||value;
 const labelReason=value=>reasons[value]||value||'';
 function appendStep(text,created){
@@ -260,6 +317,7 @@ async function inspect(id){
  const data=await api('/admin/jobs/'+id);selected=id;
  byId('inspection').hidden=false;byId('job-title').textContent=(parse(data.job.work)?.title||'Задание')+' · #'+id;
  renderProgress(data);
+ renderCandidates(parse(data.job.decision),parse(data.job.candidate));
  show('decision',parse(data.job.decision));show('candidate',parse(data.job.candidate));
  show('history',{events:data.events,imports:data.imports});
  byId('retry').disabled=!['FAILED','NEEDS_REVIEW','AUTH_REQUIRED','WAITING_FOR_RELEASE','RETRY_SCHEDULED'].includes(data.job.state);

@@ -70,6 +70,7 @@ class SearchResult(BaseModel):
 class ReleaseDetails(BaseModel):
     evidence: list[Evidence] = []
     files: list[str] = []
+    image_url: str | None = Field(default=None, max_length=1000)
 
 
 class DownloadHandle(BaseModel):
@@ -85,6 +86,7 @@ class Candidate(BaseModel):
     reasons: list[str] = []
     unknown: list[str] = []
     score: dict[str, int] = {}
+    image_url: str | None = Field(default=None, max_length=1000)
 
 
 class Provider(Protocol):

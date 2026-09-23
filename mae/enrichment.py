@@ -3,12 +3,34 @@
 import re
 import time
 from pathlib import PurePosixPath
-from urllib.parse import urlsplit
+from urllib.parse import urljoin, urlsplit
 
 from bs4 import BeautifulSoup
 
 from mae.domain import Evidence, Outcome, ProviderError, ReleaseDetails
 from mae.security import SafeHTTP, clean_text
+
+
+def card_image(content, base_url):
+    """First poster-like HTTPS image of a release card, for display only.
+
+    Never used as evidence. BBCode forums put lazy images in var.postImg[title].
+    """
+    for node in content.select("img[src], var.postImg[title]"):
+        value = node.get("src") if node.name == "img" else node.get("title")
+        url = urljoin(base_url, (value or "").strip())
+        parsed = urlsplit(url)
+        if parsed.scheme != "https" or parsed.username or len(url) > 1000 or re.search(r"[\s\"'<>]", url):
+            continue
+        if re.search(r"(?i)smil|emoji|icon|avatar|rank|button|spacer|/images/", parsed.path):
+            continue
+        try:
+            if 0 < int(node.get("width") or 999) < 80 or 0 < int(node.get("height") or 999) < 80:
+                continue
+        except ValueError:
+            pass
+        return url
+    return None
 
 
 class HTMLDetailsEnricher:
@@ -61,7 +83,10 @@ class HTMLDetailsEnricher:
         cleaned = clean_text(str(content))
         if not cleaned:
             raise ProviderError(Outcome.PARSER_BROKEN)
-        result = ReleaseDetails(evidence=[Evidence(id="card", text=cleaned, method="html-card-v1")])
+        result = ReleaseDetails(
+            evidence=[Evidence(id="card", text=cleaned, method="html-card-v1")],
+            image_url=card_image(content, url),
+        )
         return result
 
 
