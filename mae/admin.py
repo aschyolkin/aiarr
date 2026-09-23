@@ -221,9 +221,18 @@ function renderProgress(data){
  if(chosen?.release){const facts=[...new Set((chosen.claims||[]).map(x=>x.field+': '+x.value))];
   appendStep('Выбран релиз: '+chosen.release.title+' ('+chosen.release.provider+')'+
    (facts.length?'. Подтверждено: '+facts.join(', '):'. Соответствует заданной политике.'));}
- for(const item of data.imports||[])if(item.state==='PUBLISHED')
+ for(const item of data.imports||[])if(item.state==='PUBLISHED'){
+  const release=item.source?.split('/').slice(-2,-1)[0]||'релиз',probe=parse(item.probe)||{};
+  const video=(probe.streams||[]).find(x=>x.codec_type==='video'),
+   audio=(probe.streams||[]).some(x=>x.codec_type==='audio'&&['rus','ru'].includes(x.tags?.language));
+  const facts=[video?.codec_name?.toUpperCase(),video?.width&&video?.height?video.width+'×'+video.height:null,
+   audio?'русская дорожка подтверждена':null].filter(Boolean);
+  appendStep('Скачан и проверен релиз «'+release+'»'+(facts.length?': '+facts.join(', '):'')+'.');
   appendStep('Файл '+(item.episode||'фильма')+' добавлен в библиотеку.');
- if(job.state==='AVAILABLE'||job.reason==='PARTIAL_SEASON')appendStep('Jellyfin подтвердил доступные файлы.');
+ }
+ if(job.state==='AVAILABLE'||(data.imports||[]).some(item=>item.state==='PUBLISHED'&&
+   (item.episode?ready.some(ep=>ep.episode===item.episode):job.state==='AVAILABLE')))
+  appendStep('Jellyfin подтвердил доступные файлы.');
 }
 async function inspect(id){
  const data=await api('/admin/jobs/'+id);selected=id;
