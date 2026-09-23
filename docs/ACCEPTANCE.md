@@ -1,5 +1,31 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Production deployment 83881b1 — 2026-09-24
+
+Отдельные страницы «Заявки / Источники / Настройки» (навигация справа
+сверху), обложки TMDB в карточках (poster_path из Seerr, backfill для
+существующих заявок), отменённые заявки скрыты из списка. Страница источников
+показывает девять запрошенных источников, состояние индексаторов Prowlarr и
+принимает логин/пароль индексаторов, который Prowlarr проверяет входом на сайт
+до сохранения; пароли из Prowlarr не возвращаются. RuTracker.org (Prowlarr
+indexer 12, проверенный поиск) подключён как Torznab-источник `rutracker-org`.
+
+Доступность из сети Щёкино (TrueNAS) на 2026-09-24: rutracker.org, nnmclub.to,
+lostfilm.tv, alexfilm.tv — отвечают; rutor.info/rutor.is, kinozal.tv,
+newstudio.tv, redheadsound.studio, fla-fi.studio — таймаут. Prowlarr держит
+RuTor и Kinozal отключёнными из-за ошибок с 2026-09-09; NewStudio в Prowlarr не
+добавлен (сайт недоступен, добавление упирается в проверку). Kinozal не
+подключён к aiarr, пока индексатор падает: ошибка источника без кандидатов
+переводит заявку в повторные попытки.
+
+TrueNAS 25.10 не строит кнопку Web UI для custom-приложений
+(`crud.py`: portals обновляются только при `custom_app is False`). В compose
+добавлен `x-portals` (Web UI → `http://10.110.111.2:30280/admin`) на случай
+поддержки в следующих версиях.
+
+Снапшот `data/apps/aiarr-state@pre-83881b1-*`, образ `sha256:1bc84093…`.
+После обновления api `healthy`, migrate 0.
+
 ## Production deployment 90cbd64 — 2026-09-23
 
 Два пакета за один деплой: (1) допуск источников без метки CAM/TS/TC вместо
