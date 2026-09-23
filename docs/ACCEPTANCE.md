@@ -1,5 +1,35 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Episode unmonitoring — 2026-09-23
+
+Offline: **211 passed**, Ruff clean. Removing an episode from a series request
+now excludes it from future work. If the job already owns a torrent, removing
+any episode pauses the torrent on the next worker tick and leaves the job in
+`NEEDS_REVIEW` with its files intact. Removing the last episode before a download
+waits without starting one; monitoring it again reopens the request. A completed
+job with no monitored episodes no longer reports missing library media.
+
+The image `media-acquisition-engine:unmonitor-20260923` was built on TrueNAS
+from a source bundle with SHA-256
+`e9e0c8fd2b689e15bbb375a59d867e6f340ef642bee4bdf20151b289ee60debb`.
+Image ID: `sha256:8ebbb3ecc63581b01061d50e95de81da5cdeea118136609b7e2231f983c216b1`.
+In the disposable Seerr 3.4.1/qBittorrent 5.2.3/Jellyfin 10.11.11 stack,
+qBittorrent transfer/probe/hardlink and Jellyfin discovery passed. A real
+selected-season Seerr request added a synthetic torrent; unmonitoring one of
+its 13 episodes through the facade moved the job to `NEEDS_REVIEW`, retained
+the torrent, and qBittorrent reported `stoppedDL`. No import was published.
+The disposable containers and networks were removed after the test.
+
+Before deployment, the app Compose configuration and consistent schema-0007
+SQLite backup were saved in the private directory
+`/mnt/data/apps/aiarr-pre-unmonitor-20260923-1426`. TrueNAS `app.update`
+changed only the image tag for `api`, `worker`, and `migrate`. Post-update:
+app `RUNNING`, API `healthy`, authenticated health `dry_run=true`, schema
+`0007`, the same two dry-run jobs and zero active aiarr torrents. The live
+Sonarr-compatible facade returned 11 monitored episodes. This verifies the
+deployed runtime and an isolated real-service transition; no production
+in-progress torrent was unmonitored, and no legacy Seerr ownership was changed.
+
 ## Non-TV work — 2026-09-21
 
 Offline: **207 passed**, Ruff clean. Commit `999547f` adds migration 0007,
@@ -295,7 +325,6 @@ access methods are blocked. No DRM/account restriction bypass attempted.
 ## Outstanding implementation / acceptance (not hidden as access blockers)
 
 Real-source movie E2E and partial-season/new-episode acquisition E2E,
-individual episode unmonitoring,
 generation-aware re-request and cancellation reconciliation, source-specific card
 parsers/fixtures/file-list/live downloads for all required sources, direct studio
 catalog adapters, live source magnet coverage, complete evidence/audio-track models

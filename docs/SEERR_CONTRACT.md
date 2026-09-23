@@ -36,10 +36,13 @@ verification/import and Jellyfin visibility.
 Partial season counts use individually observed Jellyfin episode coverage.
 Episode IDs are persisted by migration 0002 and survive request merges/restarts.
 Several approved requests for different seasons of one series are combined.
-All desired episodes are monitored by definition; setting `monitored=true` is
-idempotent and requires current Seerr approval. Disabling individual episodes
-returns 422. Cancelled requests return 409 until Seerr re-approves or creates a
-new request. These unsupported operations are not silently acknowledged.
+Setting `monitored=true` requires current Seerr approval. Individual episode
+unmonitoring persists and removes the episode from future acquisition. When an
+owned torrent is already in progress, changing episode monitoring moves the job
+to `NEEDS_REVIEW` and pauses the torrent on the next worker tick; the torrent and
+files remain for review. Unmonitoring the final episode before a download moves
+the job to `WAITING_FOR_RELEASE`; monitoring it again reopens the job. Cancelled
+requests return 409 until Seerr re-approves or creates a new request.
 
 Live `tests/live_seerr.py`: Seerr 3.4.1 onboarding via Jellyfin 10.11.11, both
 connection tests, movie POST and selected-season POST passed; 2 dry-run jobs,
@@ -61,8 +64,9 @@ old request and the new Seerr request opens generation 2. It never targets a
 production Seerr instance. It passed live on the isolated Seerr 3.4.1/Jellyfin
 10.11.11 stack (generation 2 observed).
 
-Limitations: individual episode unmonitoring and full metadata lookup contract are
-not accepted yet. Cancellation/re-request has offline coverage but still requires
+Limitations: in-flight episode unmonitoring has offline coverage only; resuming a
+paused torrent after review is manual. Full metadata lookup contract remains
+incomplete. Cancellation/re-request has offline coverage but still requires
 a live Seerr cancellation/re-request observation.
 Offline facade tests use a controlled double; the separate live test uses real Seerr.
 Production must not be switched based on these tests alone.

@@ -2,9 +2,10 @@
 
 Experimental build. Read ACCEPTANCE.md before any production switch.
 
-Latest verified checkpoint (2026-09-21): aiarr runs `media-acquisition-engine:d4591d6`
-with dry-run enabled. See the dated ACCEPTANCE update for the verified image
-ID and backups. Seerr has saved non-default aiarr services for movies/series
+Latest verified checkpoint (2026-09-23): aiarr runs
+`media-acquisition-engine:unmonitor-20260923` with dry-run enabled. See the
+dated ACCEPTANCE update for the verified image ID, isolated live test and
+private rollback backup. Seerr has saved non-default aiarr services for movies/series
 with scans and automatic search disabled; legacy defaults are unchanged.
 The historical deployment sections below predate this staged integration.
 
@@ -199,6 +200,8 @@ docker compose -f compose.test.yaml --profile full run --rm --entrypoint python 
 docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py
 # Optional: disposable Seerr request deletion + re-request lifecycle check
 docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py --lifecycle
+# Optional: isolated Seerr episode unmonitor -> real qBittorrent pause
+docker compose -f compose.test.yaml --profile full run --rm --entrypoint python test /tests/live_seerr.py --unmonitor-series-fixture
 docker compose -f compose.test.yaml --profile full down
 ```
 

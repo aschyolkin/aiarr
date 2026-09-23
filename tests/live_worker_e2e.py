@@ -146,6 +146,58 @@ class Fixture:
                 worker.terminate()
                 worker.wait(timeout=15)
 
+    def unmonitor_inflight(self, env, engine_url, jobs):
+        """Exercise the real Seerr facade, worker and isolated qBittorrent pause."""
+        series = next(j for j in jobs if json.loads(j["work"])["kind"] == "series")
+        assert not self.leecher.torrents_info(torrent_hashes=self.hash), "Torrent must be new"
+        worker = subprocess.Popen(["/app/.venv/bin/mae", "worker"], env=env)
+        try:
+            with httpx.Client(
+                base_url=engine_url, timeout=20, trust_env=False,
+                headers={"X-Api-Key": env["MAE_API_KEY"]},
+            ) as api:
+                deadline = time.monotonic() + 120
+                while time.monotonic() < deadline:
+                    assert worker.poll() is None, "Worker exited unexpectedly"
+                    job = api.get(f"/admin/jobs/{series['id']}").json()["job"]
+                    if job["torrent_hash"] == self.hash and self.leecher.torrents_info(torrent_hashes=self.hash):
+                        break
+                    if job["state"] in {"FAILED", "NEEDS_REVIEW", "AUTH_REQUIRED"}:
+                        raise AssertionError(f"Acquisition stopped before unmonitor: {job['state']}")
+                    time.sleep(1)
+                else:
+                    raise AssertionError("Torrent add timeout before unmonitor")
+                episodes = api.get(f"/sonarr/api/v3/episode?seriesId={series['id']}")
+                episodes.raise_for_status()
+                assert len(episodes.json()) == 13
+                changed = api.put(
+                    "/sonarr/api/v3/episode/monitor",
+                    json={"episodeIds": [episodes.json()[0]["id"]], "monitored": False},
+                )
+                changed.raise_for_status()
+                assert changed.json()[0]["monitored"] is False
+                deadline = time.monotonic() + 30
+                while time.monotonic() < deadline:
+                    job = api.get(f"/admin/jobs/{series['id']}").json()["job"]
+                    torrents = self.leecher.torrents_info(torrent_hashes=self.hash)
+                    if (job["cancel_pause_done"] and torrents and
+                            torrents[0]["state"] in {"stoppedDL", "stoppedUP", "pausedDL", "pausedUP"}):
+                        assert job["state"] == "NEEDS_REVIEW"
+                        assert job["reason"] == "EPISODE_MONITORING_CHANGED"
+                        assert not api.get(f"/admin/jobs/{series['id']}").json()["imports"]
+                        print(json.dumps({
+                            "result": "PASS",
+                            "scope": "isolated Seerr episode unmonitor -> worker -> qBittorrent pause",
+                            "torrent_state": torrents[0]["state"],
+                        }), flush=True)
+                        return
+                    time.sleep(1)
+                raise AssertionError("Owned torrent was not paused after unmonitor")
+        finally:
+            if worker.poll() is None:
+                worker.terminate()
+                worker.wait(timeout=15)
+
 
 @contextmanager
 def acquisition_fixture(localized_title, kind="movie"):

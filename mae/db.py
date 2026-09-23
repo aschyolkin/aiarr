@@ -153,15 +153,19 @@ class Database:
             conn.execute(text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED','SEERR_REQUEST_NOT_ACTIVE',:now)"), {"id": job_id, "now": now})
         return bool(changed.rowcount)
 
-    def cancelled_downloads_to_pause(self):
+    def downloads_to_pause(self):
         return self.execute(
-            "SELECT id,torrent_hash FROM jobs WHERE state='CANCELLED' AND torrent_hash IS NOT NULL "
+            "SELECT id,torrent_hash FROM jobs WHERE (state='CANCELLED' OR "
+            "(state='NEEDS_REVIEW' AND reason IN "
+            "('NO_MONITORED_EPISODES','EPISODE_MONITORING_CHANGED'))) AND torrent_hash IS NOT NULL "
             "AND cancel_pause_done=0 ORDER BY id"
         )
 
-    def mark_cancel_pause_done(self, job_id):
+    def mark_pause_done(self, job_id):
         self.execute(
-            "UPDATE jobs SET cancel_pause_done=1 WHERE id=:id AND state='CANCELLED'", id=job_id
+            "UPDATE jobs SET cancel_pause_done=1 WHERE id=:id AND (state='CANCELLED' OR "
+            "(state='NEEDS_REVIEW' AND reason IN "
+            "('NO_MONITORED_EPISODES','EPISODE_MONITORING_CHANGED')))", id=job_id
         )
 
     def record_coverage(self, job_id, coverage):
@@ -189,9 +193,30 @@ class Database:
                 raise KeyError("EPISODE_NOT_FOUND")
             for row in rows:
                 conn.execute(text("UPDATE episodes SET monitored=:monitored WHERE id=:id"), {"id": row["id"], "monitored": int(monitored)})
-            if monitored:
-                for job_id in {row["job_id"] for row in rows}:
-                    conn.execute(text("UPDATE jobs SET state='REQUESTED',next_run=0,reason=NULL WHERE id=:id AND state='AVAILABLE'"), {"id": job_id})
+            for job_id in {row["job_id"] for row in rows}:
+                if monitored:
+                    conn.execute(text(
+                        "UPDATE jobs SET state='REQUESTED',next_run=0,reason=NULL "
+                        "WHERE id=:id AND (state='AVAILABLE' OR "
+                        "(state='WAITING_FOR_RELEASE' AND reason='NO_MONITORED_EPISODES'))"
+                    ), {"id": job_id})
+                else:
+                    remaining = conn.execute(text(
+                        "SELECT 1 FROM episodes WHERE job_id=:id AND monitored=1 LIMIT 1"
+                    ), {"id": job_id}).first()
+                    if not remaining:
+                        conn.execute(text(
+                            "UPDATE jobs SET state=CASE WHEN torrent_hash IS NULL THEN 'WAITING_FOR_RELEASE' "
+                            "ELSE 'NEEDS_REVIEW' END,reason='NO_MONITORED_EPISODES',"
+                            "next_run=0,cancel_pause_done=0 WHERE id=:id "
+                            "AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED')"
+                        ), {"id": job_id})
+                    else:
+                        conn.execute(text(
+                            "UPDATE jobs SET state='NEEDS_REVIEW',reason='EPISODE_MONITORING_CHANGED',"
+                            "next_run=0,cancel_pause_done=0 WHERE id=:id AND torrent_hash IS NOT NULL "
+                            "AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED')"
+                        ), {"id": job_id})
 
     def observe_completed(self, job, coverage):
         work = json.loads(job["work"])
@@ -206,7 +231,7 @@ class Database:
                     )
                 }
             )
-            missing = not wanted or not wanted.issubset(coverage)
+            missing = bool(wanted) and not wanted.issubset(coverage)
             changed = conn.execute(
                 text(
                     "UPDATE jobs SET state=:state,reason=:reason,next_run=:next "
