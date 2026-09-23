@@ -153,7 +153,12 @@ class Downloader:
         ):
             raise ValueError("TORRENT_SELECTION_INTENT_MISSING")
         wanted = set(wanted_episodes)
+        # qBittorrent may expose the torrent row before its file table.
+        deadline = time.monotonic() + 10
         files = self.files(torrent_hash)
+        while not files and time.monotonic() < deadline:
+            time.sleep(0.5)
+            files = self.files(torrent_hash)
         if not files or len(files) > 10000:
             raise ProviderError(Outcome.TEMPORARY_FAILURE)
         chosen = set()

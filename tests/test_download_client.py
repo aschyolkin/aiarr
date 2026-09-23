@@ -48,6 +48,20 @@ def test_select_only_missing_episode_before_resuming(settings):
     client.torrents_remove_tags.assert_called_once()
 
 
+def test_selection_waits_for_qbittorrent_file_table(settings, monkeypatch):
+    d = Downloader(settings)
+    client = d.client = Mock()
+    client.torrents_info.return_value = [{"category": "mae", "tags": "mae-selection-pending"}]
+    file = {"index": 0, "name": "Example.S01E02.mkv", "priority": 1}
+    client.torrents_files.side_effect = [[], [file], [file]]
+    monkeypatch.setattr("mae.downloads.time.sleep", lambda _delay: None)
+
+    d.complete_selection("a" * 40, ["S01E02"])
+
+    assert client.torrents_files.call_count == 3
+    client.torrents_resume.assert_called_once()
+
+
 def test_selection_must_verify_priorities_before_resuming(settings):
     d = Downloader(settings)
     client = d.client = Mock()
