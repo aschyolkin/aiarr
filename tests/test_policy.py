@@ -98,6 +98,36 @@ def test_constraints_before_score(title, reason, movie):
     assert reason in c.reasons and not c.score
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Example.2024.Hybrid.1080p.H.264",  # unrecognized/unmapped source label
+        "Example.2024.DVDScr.1080p.H.264",  # maps to an ordinary source (DVD), not banned
+        "Example.2024.1080p.H.264",  # no source label at all
+    ],
+)
+def test_unrecognized_or_unlabeled_source_is_accepted_for_review(title, movie):
+    c = evaluate(candidate("Audio: Russian", title), movie, Policy())
+    assert "SOURCE_NOT_ALLOWED" not in c.reasons
+    assert c.score.get("source") == 0
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Example.2024.CamRip.1080p.H.264",
+        "Example.2024.HDCAM.1080p.H.264",
+        "Example.2024.TS.1080p.H.264",
+        "Example.2024.HDTS.1080p.H.264",
+        "Example.2024.TC.1080p.H.264",
+        "Example.2024.Telecine.1080p.H.264",
+    ],
+)
+def test_explicit_cam_telesync_telecine_sources_are_rejected(title, movie):
+    c = evaluate(candidate("Audio: Russian", title), movie, Policy())
+    assert "SOURCE_NOT_ALLOWED" in c.reasons
+
+
 def test_wrong_episode():
     work = Work(kind="series", external_id=9, title="Example", seasons=[1], episodes=["S01E02"])
     c = evaluate(candidate("Audio: Russian", "Example.S01E03.1080p.WEB-DL.H.264"), work, Policy())

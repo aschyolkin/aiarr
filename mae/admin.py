@@ -48,6 +48,8 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <label class="field">Видеокодеки<select id="policy-codecs" multiple size="2"><option value="H.265">H.265</option><option value="H.264">H.264</option></select></label>
 <label class="field"><span>Русская аудиодорожка обязательна</span><input id="policy-russian" type="checkbox"></label>
 </div><label class="field">Приоритеты источников (JSON)<textarea id="policy-sources"></textarea></label>
+<p class="hint">Источник без явной метки CAM/TS/TC (например «Hybrid» или вообще без пометки) принимается к рассмотрению, а не отбрасывается. Отбрасываются только явные экранки и телесинк/телесине.</p>
+<label class="field">Запрещённые источники (JSON-список)<textarea id="policy-denied-sources"></textarea></label>
 <label class="field">Приоритеты студий (JSON)<textarea id="policy-studios"></textarea></label></fieldset>
 <fieldset><legend>Источники релизов</legend>
 <p class="hint">Анонимный трекер: оставьте ключ и Cookie пустыми. Для Torznab/Prowlarr укажите API-ключ; для закрытой карточки источника укажите Cookie и хост карточки.</p>
@@ -153,6 +155,7 @@ function renderConfig(){
  for(const option of byId('policy-codecs').options)option.selected=p.codecs.includes(option.value);
  byId('policy-russian').checked=p.russian_required;
  byId('policy-sources').value=JSON.stringify(p.source_weights,null,2);
+ byId('policy-denied-sources').value=JSON.stringify(p.denied_sources,null,2);
  byId('policy-studios').value=JSON.stringify(p.studio_weights,null,2);
  byId('provider-list').replaceChildren();for(const provider of s.providers)addProvider(provider);
  for(const key of ['qbit_url','qbit_username','jellyfin_url','seerr_url','deepseek_model',
@@ -172,6 +175,7 @@ function collectConfig(){
   resolutions:selectedValues('policy-resolution').map(Number),codecs:selectedValues('policy-codecs'),
   russian_required:byId('policy-russian').checked,
   source_weights:JSON.parse(byId('policy-sources').value),
+  denied_sources:JSON.parse(byId('policy-denied-sources').value),
   studio_weights:JSON.parse(byId('policy-studios').value)};
  if(!policy.resolutions.length||!policy.codecs.length)throw new Error('Выберите разрешение и видеокодек.');
  const providers=[...byId('provider-list').children].map(box=>{
@@ -213,7 +217,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
 const candidateReasons={IDENTITY_MISMATCH:'другое название',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
- SOURCE_NOT_ALLOWED:'источник видео не разрешён',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
+ SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
  CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',
  desired_episode_coverage:'неизвестен список серий',compatible_video_codec:'кодек не подтверждён',
  size:'размер неизвестен',russian_audio:'русская дорожка не подтверждена',

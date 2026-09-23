@@ -26,7 +26,7 @@ def evaluate(candidate, work, policy):
         if not work.episodes:
             c.unknown.append("desired_episode_coverage")
     source = p.get("source")
-    if source not in policy.source_weights:
+    if source in policy.denied_sources:
         c.reasons.append("SOURCE_NOT_ALLOWED")
     resolution = str(p.get("screen_size", ""))
     if resolution not in [f"{n}p" for n in policy.resolutions]:
@@ -46,7 +46,7 @@ def evaluate(candidate, work, policy):
     if c.reasons or c.unknown:
         return c
     c.score = {
-        "source": policy.source_weights[source],
+        "source": policy.source_weights.get(source, 0),
         "resolution": 30 if resolution == "2160p" else 10,
         "codec": 10 if p.get("video_codec") == "H.265" else 0,
     }

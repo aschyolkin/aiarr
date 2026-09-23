@@ -80,6 +80,12 @@ class Policy(BaseModel):
     resolutions: list[int] = [2160, 1080]
     codecs: list[str] = ["H.265", "H.264"]
     source_weights: dict[str, int] = {"Web": 40, "Blu-ray": 40}
+    # Only explicitly bad sources are rejected; an unrecognized/unlabeled
+    # source (guessit returns None, or an unmapped word like "Hybrid") is
+    # accepted for review rather than assumed to be a cam/telesync rip.
+    denied_sources: list[str] = [
+        "Camera", "HD Camera", "Telesync", "HD Telesync", "Telecine", "HD Telecine",
+    ]
     studio_weights: dict[str, int] = {
         "LostFilm": 0,
         "NewStudio": 0,
