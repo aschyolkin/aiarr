@@ -227,6 +227,25 @@ class Downloader:
         self.info(torrent_hash)  # ownership check before accessing paths
         return self.client.torrents_files(torrent_hash=torrent_hash)
 
+    def delete_owned(self, torrent_hash, downloads_root):
+        """Delete torrent and payload only after category, tag and path checks."""
+        info = self.info(torrent_hash)
+        if info is None:
+            return False
+        if "media-acquisition-engine" not in {tag.strip() for tag in info.get("tags", "").split(",")}:
+            raise ValueError("TORRENT_OWNERSHIP_TAG_MISSING")
+        save_path = PurePosixPath(info.get("save_path") or "")
+        if not save_path.is_absolute() or ".." in save_path.parts or not save_path.is_relative_to(
+            PurePosixPath(str(downloads_root))
+        ):
+            raise ValueError("TORRENT_OUTSIDE_MANAGED_PATH")
+        for row in self.client.torrents_files(torrent_hash=torrent_hash):
+            safe_relative(row["name"])
+        self.client.torrents_delete(delete_files=True, torrent_hashes=torrent_hash)
+        if self.client.torrents_info(torrent_hashes=torrent_hash):
+            raise ProviderError(Outcome.TEMPORARY_FAILURE)
+        return True
+
     def pause(self, torrent_hash):
         """Pause only a torrent that remains demonstrably owned by this engine."""
         if self.info(torrent_hash) is None:

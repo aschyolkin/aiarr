@@ -135,6 +135,37 @@ class Database:
             conn.execute(text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED','ADMIN_CANCELLED',:now)"), {"id": job_id, "now": now})
             return True
 
+    def mark_seerr_request_deleted(self, request_id):
+        """Retire a confirmed 404 request; cleanup is durable and worker-owned."""
+        now = time.time()
+        with self.engine.begin() as conn:
+            request = conn.execute(
+                text("SELECT job_id,status FROM seerr_requests WHERE request_id=:id"), {"id": request_id}
+            ).mappings().first()
+            if request is None or request["status"] == -1:
+                return False
+            conn.execute(
+                text("UPDATE seerr_requests SET status=-1,active=0,suppressed=1,updated=:now "
+                     "WHERE request_id=:id"), {"id": request_id, "now": now}
+            )
+            active = conn.execute(
+                text("SELECT 1 FROM seerr_requests WHERE job_id=:id AND active=1 AND suppressed=0 LIMIT 1"),
+                {"id": request["job_id"]},
+            ).first()
+            if active:
+                return False
+            conn.execute(
+                text("UPDATE jobs SET state='CANCELLED',reason='SEERR_REQUEST_DELETED',"
+                     "next_run=:now,cancel_pause_done=0 WHERE id=:id"),
+                {"id": request["job_id"], "now": now},
+            )
+            conn.execute(
+                text("INSERT INTO events(job_id,state,reason,created) "
+                     "VALUES(:id,'CANCELLED','SEERR_REQUEST_DELETED',:now)"),
+                {"id": request["job_id"], "now": now},
+            )
+            return True
+
     def _cancel_if_no_active_seerr_request(self, conn, job_id, now):
         active = conn.execute(
             text("SELECT 1 FROM seerr_requests WHERE job_id=:id AND active=1 AND suppressed=0 LIMIT 1"),
@@ -155,11 +186,49 @@ class Database:
 
     def downloads_to_pause(self):
         return self.execute(
-            "SELECT id,torrent_hash FROM jobs WHERE (state='CANCELLED' OR "
+            "SELECT id,torrent_hash FROM jobs WHERE ((state='CANCELLED' "
+            "AND reason!='SEERR_REQUEST_DELETED') OR "
             "(state='NEEDS_REVIEW' AND reason IN "
             "('NO_MONITORED_EPISODES','EPISODE_MONITORING_CHANGED'))) AND torrent_hash IS NOT NULL "
             "AND cancel_pause_done=0 ORDER BY id"
         )
+
+    def deleted_request_cleanups(self):
+        return self.execute(
+            "SELECT * FROM jobs WHERE state='CANCELLED' AND reason='SEERR_REQUEST_DELETED' "
+            "AND cancel_pause_done=0 AND next_run<=:now ORDER BY id", now=time.time()
+        )
+
+    def finish_deleted_request_cleanup(self, job_id):
+        now = time.time()
+        with self.engine.begin() as conn:
+            changed = conn.execute(
+                text("UPDATE jobs SET cancel_pause_done=1,torrent_hash=NULL,reserved=0 WHERE id=:id "
+                     "AND state='CANCELLED' AND reason='SEERR_REQUEST_DELETED' AND cancel_pause_done=0"),
+                {"id": job_id},
+            )
+            if changed.rowcount:
+                conn.execute(
+                    text("INSERT INTO events(job_id,state,reason,created) "
+                         "VALUES(:id,'CANCELLED','SEERR_CLEANUP_DONE',:now)"), {"id": job_id, "now": now}
+                )
+
+    def block_deleted_request_cleanup(self, job_id, code, delay=600):
+        """Keep data in place; retry later and record each distinct blocker once."""
+        now = time.time()
+        with self.engine.begin() as conn:
+            conn.execute(
+                text("UPDATE jobs SET next_run=:next WHERE id=:id AND state='CANCELLED' "
+                     "AND reason='SEERR_REQUEST_DELETED'"), {"id": job_id, "next": now + delay}
+            )
+            last = conn.execute(
+                text("SELECT reason FROM events WHERE job_id=:id ORDER BY id DESC LIMIT 1"), {"id": job_id}
+            ).first()
+            if last is None or last[0] != code:
+                conn.execute(
+                    text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED',:code,:now)"),
+                    {"id": job_id, "code": code, "now": now},
+                )
 
     def mark_pause_done(self, job_id):
         self.execute(

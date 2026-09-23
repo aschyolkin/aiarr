@@ -5,9 +5,15 @@ from mae.seerr import Seerr
 class MutableSeerr(Seerr):
     def __init__(self, requests):
         self._requests = requests
+        self.known = {}
 
     def requests(self):
+        # Rows omitted from the list still exist in Seerr with their last status.
+        self.known.update({row["id"]: row for row in self._requests})
         return self._requests
+
+    def request_status(self, request_id):
+        return self.known.get(request_id, {"id": request_id, "status": 2})
 
     def work(self, request):
         return Work(kind="movie", external_id=17, title="Example", year=2024)

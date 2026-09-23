@@ -17,16 +17,22 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 .summary{padding:1rem;background:#1f2937;border-radius:.5rem}.timeline{padding-left:1.6rem}
 .timeline li{padding:.35rem .3rem .7rem;border-left:2px solid #4b5563;padding-left:1rem}
 .timeline time{display:block;color:#9ca3af;font-size:.85rem}.progress{width:100%;height:1rem}
+.cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:1rem}
+.card{background:#1f2937;border:1px solid #374151;border-radius:.75rem;padding:1rem;cursor:pointer;text-align:left;margin:0}
+.card:hover,.card:focus{border-color:#6366f1}.card h3{margin:.1rem 0 .5rem;font-size:1.05rem}
+.badge{display:inline-block;padding:.15rem .6rem;border-radius:999px;font-size:.8rem;font-weight:600;background:#374151}
+.ok{background:#065f46}.work{background:#3730a3}.warn{background:#92400e}.bad{background:#991b1b}
+.muted{color:#9ca3af;font-size:.9rem;margin:.4rem 0 0}
 </style>
 <h1>aiarr</h1><p>Очередь, доказательства выбора и диагностика импорта</p>
-<form id="login"><label>API-ключ <input id="key" type="password" autocomplete="off" required></label>
-<button>Войти</button></form>
+<div id="login" hidden><p>Войдите в Seerr под администратором в этом браузере и обновите страницу.</p>
+<details><summary>Аварийный вход по API-ключу</summary><form id="key-login">
+<label>API-ключ <input id="key" type="password" autocomplete="off" required></label><button>Войти</button></form></details></div>
 <p id="status" role="status"></p>
 <main id="dashboard" hidden>
 <button id="refresh">Обновить</button><button id="logout">Выйти</button>
 <p id="mode"></p>
-<section><table><thead><tr><th>ID</th><th>Произведение</th><th>Состояние</th><th>Причина</th><th></th></tr></thead>
-<tbody id="jobs"></tbody></table></section>
+<section><div id="jobs" class="cards"></div></section>
 <details><summary>Источники</summary><pre id="sources"></pre></details>
 <details><summary>Профиль качества</summary><pre id="profiles"></pre></details>
 <details id="config-panel"><summary>Настройки aiarr</summary>
@@ -75,27 +81,31 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <h3>Ход заказа</h3><ol id="timeline" class="timeline"></ol>
 <div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
 <button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
-<p>Просмотр evidence не разрешает обход обязательных условий. Отмена сохраняет торрент и файлы.</p>
-<details open><summary>Кандидаты, evidence и причины выбора</summary><pre id="decision"></pre></details>
+<p class="hint">Отмена в aiarr сохраняет торрент и файлы. Удаление заявки в Seerr удаляет файлы и торрент этой заявки после проверки владельца.</p>
+<details><summary>Технические подробности</summary>
+<details><summary>Кандидаты, evidence и причины выбора</summary><pre id="decision"></pre></details>
 <details><summary>Выбранный релиз</summary><pre id="candidate"></pre></details>
-<details><summary>События и импорт</summary><pre id="history"></pre></details>
+<details><summary>События и импорт</summary><pre id="history"></pre></details></details>
 </section></main>
 <script>
 'use strict';
-let token='', selected=null, busy=false, config=null;
+let token='', signedIn=false, selected=null, busy=false, config=null;
 const byId=id=>document.getElementById(id);
 const show=(id,value)=>{byId(id).textContent=JSON.stringify(value,null,2);};
 const parse=value=>{try{return JSON.parse(value||'null');}catch{return null;}};
 function clearSession(){
- token='';selected=null;config=null;byId('key').value='';byId('dashboard').hidden=true;
+ token='';signedIn=false;selected=null;config=null;byId('key').value='';byId('dashboard').hidden=true;
  byId('inspection').hidden=true;byId('login').hidden=false;
  byId('provider-list').replaceChildren();byId('config-form').reset();
  for(const id of ['jobs','sources','profiles','metrics','decision','candidate','history','mode','job-title'])byId(id).textContent='';
 }
 async function api(path,method='GET',body=null){
- const headers={'X-Api-Key':token};if(body!==null)headers['Content-Type']='application/json';
- const response=await fetch(path,{method,headers,body:body===null?undefined:JSON.stringify(body),cache:'no-store',redirect:'error'});
- if(response.status===401){clearSession();throw new Error('Неверный ключ или доступ отозван.');}
+ const headers={'X-Aiarr-UI':'1'};if(token)headers['X-Api-Key']=token;
+ if(body!==null)headers['Content-Type']='application/json';
+ const response=await fetch(path,{method,headers,body:body===null?undefined:JSON.stringify(body),
+  cache:'no-store',redirect:'error',credentials:'same-origin'});
+ if(response.status===401){clearSession();throw new Error('Нужен вход в Seerr под администратором.');}
+ if(response.status===503)throw new Error('Seerr недоступен, вход проверить нельзя.');
  if(!response.ok){const data=await response.json().catch(()=>({}));throw new Error(data.detail||'HTTP '+response.status);}
  return response.json();
 }
@@ -177,12 +187,24 @@ const states={REQUESTED:'Заявка принята',SEARCHING:'Поиск ре
  WAITING_FOR_RELEASE:'Ожидание релиза',NEEDS_REVIEW:'Требуется проверка',
  RETRY_SCHEDULED:'Повторная попытка запланирована',AUTH_REQUIRED:'Нужен доступ к источнику',
  FAILED:'Ошибка обработки',CANCELLED:'Заявка отменена'};
+const tone={AVAILABLE:'ok',DOWNLOADING:'work',VERIFYING:'work',IMPORTING:'work',SEARCHING:'work',ENRICHING:'work',
+ SELECTED:'work',REQUESTED:'work',WAITING_FOR_RELEASE:'warn',RETRY_SCHEDULED:'warn',NEEDS_REVIEW:'bad',
+ AUTH_REQUIRED:'bad',FAILED:'bad'};
 const reasons={PARTIAL_SEASON:'Часть серий уже доступна, остальные ещё ищутся',
  NO_PROVEN_CANDIDATE:'Подходящий релиз пока не подтверждён',
  WAITING_FOR_JELLYFIN:'Файл добавлен, ожидается сканирование Jellyfin',
  ALREADY_IN_LIBRARY:'Уже есть в Jellyfin',DRY_RUN_SELECTED:'Релиз найден, загрузка отключена',
  INSUFFICIENT_SPACE:'Недостаточно места на диске',DOWNLOAD_QUEUE_LIMIT:'Очередь загрузок заполнена',
- VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного',RUSSIAN_AUDIO_NOT_TAGGED:'Не подтверждена русская аудиодорожка'};
+ VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного',RUSSIAN_AUDIO_NOT_TAGGED:'Не подтверждена русская аудиодорожка',
+ SEERR_REQUEST_DELETED:'Заявка удалена в Seerr, файлы удаляются',SEERR_FILE_REMOVED:'Файл удалён из библиотеки',
+ SEERR_CLEANUP_DONE:'Файлы и торрент удалены',SEERR_CLEANUP_RETRY:'Удаление повторится позже',
+ IMPORT_INODE_MISMATCH:'Файл в библиотеке заменён вручную — не удалён',
+ TORRENT_OWNERSHIP_TAG_MISSING:'Торрент без метки aiarr — не удалён',
+ TORRENT_OUTSIDE_MANAGED_PATH:'Торрент вне каталога загрузок — не удалён',
+ ADMIN_CANCELLED:'Отменено в aiarr',SEERR_REREQUESTED:'Запрошено повторно',
+ PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
+ LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
+ NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
 const labelState=value=>states[value]||value;
 const labelReason=value=>reasons[value]||value||'';
 function appendStep(text,created){
@@ -244,16 +266,23 @@ async function inspect(id){
  byId('cancel').disabled=['AVAILABLE','CANCELLED'].includes(data.job.state);
 }
 async function refresh(){
- const [health,jobs,sources,profiles,metrics]=await Promise.all([
-  api('/health'),api('/admin/jobs'),api('/admin/sources'),api('/admin/profiles'),api('/metrics')]);
- byId('mode').textContent=health.dry_run?'Dry-run: загрузки выключены':'Загрузки разрешены конфигурацией';
+ const [overview,sources,profiles,metrics]=await Promise.all([
+  api('/admin/overview'),api('/admin/sources'),api('/admin/profiles'),api('/admin/metrics')]);
+ byId('mode').textContent=overview.dry_run?'Dry-run: загрузки выключены':'Загрузки включены';
  byId('jobs').replaceChildren();
- for(const job of jobs){
-  const tr=document.createElement('tr');
-  for(const value of [job.id,parse(job.work)?.title||'',labelState(job.state),labelReason(job.reason)]){
-   const td=document.createElement('td');td.textContent=String(value);tr.append(td);}
-  const td=document.createElement('td'),button=document.createElement('button');button.textContent='Разобрать';
-  button.onclick=()=>run(()=>inspect(job.id));td.append(button);tr.append(td);byId('jobs').append(tr);
+ if(!overview.jobs.length)byId('jobs').textContent='Заявок пока нет.';
+ for(const job of overview.jobs){
+  const work=parse(job.work)||{},card=document.createElement('button');card.type='button';card.className='card';
+  const h=document.createElement('h3');h.textContent=(work.title||'Без названия')+(work.year?' ('+work.year+')':'');
+  const badge=document.createElement('span');badge.className='badge '+(tone[job.state]||'');badge.textContent=labelState(job.state);
+  card.append(h,badge);
+  const lines=[work.kind==='series'?'Сериал':'Фильм'];
+  if(work.kind==='series'&&job.wanted)lines.push('готово '+job.ready+' из '+job.wanted+' серий');
+  if(job.reason)lines.push(labelReason(job.reason));
+  const p=document.createElement('p');p.className='muted';p.textContent=lines.join(' · ');card.append(p);
+  if(typeof job.progress==='number'&&job.state==='DOWNLOADING'){const bar=document.createElement('progress');
+   bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';card.append(bar);}
+  card.onclick=()=>run(()=>inspect(job.id));byId('jobs').append(card);
  }
  show('sources',sources);show('profiles',profiles);show('metrics',metrics);
  if(config===null){config=await api('/admin/config');renderConfig();}
@@ -265,8 +294,12 @@ async function run(action){
  catch(error){byId('status').textContent=error.message;}
  finally{busy=false;byId('logout').disabled=false;}
 }
-byId('login').onsubmit=event=>{event.preventDefault();run(async()=>{
- token=byId('key').value;await refresh();byId('key').value='';byId('login').hidden=true;byId('dashboard').hidden=false;});};
+async function enter(){const who=await api('/admin/session');await refresh();signedIn=true;
+ byId('login').hidden=true;byId('dashboard').hidden=false;
+ byId('status').textContent=who.mode==='seerr'?'Вход через Seerr: '+who.name:'Вход по API-ключу';}
+byId('key-login').onsubmit=event=>{event.preventDefault();run(async()=>{
+ token=byId('key').value;byId('key').value='';await enter();});};
+(async()=>{try{await enter();}catch(error){byId('login').hidden=false;byId('status').textContent=error.message;}})();
 byId('refresh').onclick=()=>run(refresh);
 byId('add-provider').onclick=()=>addProvider();
 byId('reload-config').onclick=()=>run(async()=>{config=await api('/admin/config');renderConfig();});
@@ -275,11 +308,12 @@ byId('config-form').onsubmit=event=>{event.preventDefault();run(async()=>{
  renderConfig();byId('config-status').textContent='Настройки сохранены. Worker применит их в течение 10 секунд.';
  await refresh();
 });};
-byId('logout').onclick=()=>{clearSession();byId('status').textContent='Вы вышли';};
-setInterval(()=>{if(token&&!busy&&byId('dashboard').hidden===false)run(refresh);},15000);
+byId('logout').onclick=()=>{clearSession();byId('login').hidden=false;
+ byId('status').textContent='Ключ забыт. Сессия Seerr завершается выходом в Seerr.';};
+setInterval(()=>{if(signedIn&&!busy&&byId('dashboard').hidden===false)run(refresh);},15000);
 for(const action of ['retry','cancel'])byId(action).onclick=()=>run(async()=>{
  if(selected===null)return;
- if(!confirm(action==='cancel'?'Отменить это задание? Файлы сохранятся.':'Повторить обработку этого задания?'))return;
+ if(!confirm(action==='cancel'?'Отменить это задание? Торрент и файлы сохранятся.':'Повторить обработку этого задания?'))return;
  await api('/admin/jobs/'+selected+'/'+action,'POST');await refresh();
 });
 </script></html>'''

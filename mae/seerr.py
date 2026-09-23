@@ -35,6 +35,14 @@ class Seerr:
     def approved(self):
         return [request for request in self.requests() if request.get("status") == 2]
 
+    def request_status(self, request_id):
+        try:
+            return self.get(f"/request/{request_id}")
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code == 404:
+                return None
+            raise
+
     def work(self, request):
         media = request["media"]
         kind = "movie" if request["type"] == "movie" else "series"
@@ -62,8 +70,12 @@ class Seerr:
         # Repeated webhook/facade/poll events converge on the same request identity.
         # Missing requests do not imply cancellation: availability can remove approval.
         count = 0
-        for request in self.requests():
+        requests = self.requests()
+        seen = set()
+        for request in requests:
             request_id = request.get("id")
+            if type(request_id) is int:
+                seen.add(request_id)
             if request.get("status") == 2:
                 job_id = db.submit(self.work(request), dry_run)
                 db.observe_seerr_request(request_id, job_id, request["status"])
@@ -72,4 +84,14 @@ class Seerr:
                 rows = db.execute("SELECT job_id FROM seerr_requests WHERE request_id=:id", id=request_id)
                 if rows:
                     db.observe_seerr_request(request_id, rows[0]["job_id"], request.get("status"))
+        # A list can omit a record because of Seerr filtering. Confirm each
+        # disappearance through its own endpoint before deleting any file.
+        for row in db.execute("SELECT request_id,job_id FROM seerr_requests WHERE status!=-1"):
+            if row["request_id"] in seen:
+                continue
+            record = self.request_status(row["request_id"])
+            if record is None:
+                db.mark_seerr_request_deleted(row["request_id"])
+            elif type(record.get("status")) is int:
+                db.observe_seerr_request(row["request_id"], row["job_id"], record["status"])
         return count

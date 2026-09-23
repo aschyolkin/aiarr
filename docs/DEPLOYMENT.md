@@ -15,15 +15,34 @@ deployment sections below describe earlier staged states.
 Toy Story 5 job 3 is downloading after the NNM-Club encoding repair; its
 availability has not yet been confirmed by Jellyfin.
 
-Administrative login: `http://10.110.111.2:30280/admin`. Supply the existing
-aiarr API key in the password field, never in a bookmark or shared URL. The
-dashboard shows queue, readable order history, live torrent progress, episode
-coverage, evidence and metrics, with authenticated retry/cancel actions. Open
-**Настройки aiarr** to add/remove sources, update API keys or Cookies, quality,
-DeepSeek key and queue limits. Blank secret fields preserve their current
-values. Settings are saved in the private state dataset and loaded by the
-worker within ten seconds. The login API key, media paths and dry-run switch
-remain in the TrueNAS app configuration.
+## Незапущенный пакет улучшений — 2026-09-23
+
+После текущего образа `aaeb441` в рабочей копии подготовлены изменения для
+следующего обновления: Seerr SSO для веб-интерфейса, сверка фактически удалённых
+Seerr-заявок и серверная модель удаления принадлежащих aiarr файлов/торрентов.
+Они ещё не считаются production-развёрнутыми: перед обновлением нужно завершить
+идемпотентную очистку, прогнать полный набор тестов, создать backup SQLite и
+конфигурации TrueNAS, затем проверить сохранение активных загрузок.
+
+Правило удаления: отсутствие строки в пагинированном списке Seerr само по себе
+не является основанием для удаления. aiarr сначала делает прямой запрос
+`GET /api/v1/request/{id}` и продолжает очистку только при `404`. Файл удаляется
+только если журнал импорта подтверждает путь внутри `/data/store`, обычный файл,
+совпадение `st_dev/st_ino`, а torrent принадлежит категории `mae` и имеет тег
+`media-acquisition-engine`. При любой проверке, которая не проходит, данные
+остаются на месте и операция повторяется после исправления причины.
+
+Administrative login: `http://10.110.111.2:30280/admin`. In the pending UI
+update, first sign in to Seerr as an administrator; the browser's existing
+Seerr session authenticates aiarr without asking for an API key on every page
+refresh. The current deployed `aaeb441` interface still accepts the aiarr API
+key as its fallback login. The dashboard shows queue, readable order history,
+live torrent progress, episode coverage, evidence and metrics, with
+authenticated retry/cancel actions. Open **Настройки aiarr** to add/remove
+sources, update API keys or Cookies, quality, DeepSeek key and queue limits.
+Blank secret fields preserve their current values. Settings are saved in the
+private state dataset and loaded by the worker within ten seconds. The API key,
+media paths and dry-run switch remain in the TrueNAS app configuration.
 TrueNAS detected 25.10.7; its [Custom App documentation](https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/installcustomappscreens/)
 supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 

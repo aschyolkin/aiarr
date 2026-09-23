@@ -15,6 +15,7 @@ from mae.db import Database
 from mae.domain import Work
 from mae.runtime_config import RuntimeConfig
 from mae.seerr import Seerr
+from mae.seerr_session import same_origin_write, seerr_admin_session
 
 
 class ConfigUpdate(BaseModel):
@@ -32,10 +33,22 @@ def create_app(settings=None, db=None, seerr=None):
 
     def authenticate(request: Request):
         if request.method == "GET" and request.url.path == "/admin":
-            return  # Login shell only; all data and actions remain authenticated.
+            return  # Shell only; operational data still requires authentication.
         supplied = request.headers.get("X-Api-Key") or request.query_params.get("apikey") or ""
-        if not secrets.compare_digest(supplied, settings.api_key.get_secret_value()):
-            raise HTTPException(401, "API key required")
+        if secrets.compare_digest(supplied, settings.api_key.get_secret_value()):
+            request.state.actor = {"name": "API", "mode": "key"}
+            return
+        if request.url.path.startswith("/admin/"):
+            try:
+                user = seerr_admin_session(settings, request.headers.get("Cookie", ""))
+            except httpx.HTTPError:
+                raise HTTPException(503, "Seerr authentication unavailable") from None
+            if user:
+                if request.method not in {"GET", "HEAD"} and not same_origin_write(request):
+                    raise HTTPException(403, "Same-origin request required")
+                request.state.actor = {**user, "mode": "seerr"}
+                return
+        raise HTTPException(401, "Sign in to Seerr as administrator")
 
     app = FastAPI(
         title="Media Acquisition Engine",
@@ -81,6 +94,33 @@ def create_app(settings=None, db=None, seerr=None):
     @app.get("/admin/jobs")
     def jobs():
         return db.jobs()
+
+    @app.get("/admin/session")
+    def admin_session(request: Request):
+        return request.state.actor
+
+    @app.get("/admin/overview")
+    def overview():
+        rows = db.execute(
+            "SELECT j.id,j.work,j.state,j.reason,j.torrent_hash,j.dry_run,j.cancel_pause_done,"
+            "(SELECT COUNT(*) FROM episodes e WHERE e.job_id=j.id AND e.monitored=1) wanted,"
+            "(SELECT COUNT(*) FROM episodes e WHERE e.job_id=j.id AND e.monitored=1 AND e.available=1) ready,"
+            "(SELECT COUNT(*) FROM imports i WHERE i.job_id=j.id AND i.state='PUBLISHED') imported "
+            "FROM jobs j WHERE NOT (j.state='CANCELLED' AND j.reason='SEERR_REQUEST_DELETED' "
+            "AND j.cancel_pause_done=1) ORDER BY j.id DESC"
+        )
+        if any(row["torrent_hash"] for row in rows):
+            try:
+                from mae.downloads import Downloader
+
+                downloader = Downloader(settings)
+                for row in rows:
+                    if row["torrent_hash"]:
+                        torrent = downloader.info(row["torrent_hash"])
+                        row["progress"] = float(torrent["progress"]) if torrent else None
+            except Exception:
+                pass
+        return {"jobs": rows, "dry_run": settings.dry_run}
 
     @app.get("/admin/jobs/{job_id}")
     def detail(job_id: int):
@@ -158,6 +198,7 @@ def create_app(settings=None, db=None, seerr=None):
         return {"reconciled": seerr.reconcile(db, settings.dry_run)}
 
     @app.get("/metrics")
+    @app.get("/admin/metrics")
     def metrics():
         return {
             "queue": db.execute("SELECT state,COUNT(*) count FROM jobs GROUP BY state"),

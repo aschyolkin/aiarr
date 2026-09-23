@@ -13,15 +13,43 @@ per-file ffprobe checks, journaled hardlink import and Jellyfin discovery check.
 Default dry-run makes no downloads or library modifications. Unknown mandatory
 properties and LLM-only interpretations wait for review.
 
-Production administration: `http://10.110.111.2:30280/admin`. Enter the aiarr
-API key, select an order to see its timeline, torrent progress and episode
-coverage, or open **Настройки aiarr** to edit sources, quality, integrations,
-queue limits and the DeepSeek key. Torznab sources use an API key; protected
-source cards can use a Cookie; anonymous sources leave both fields empty.
-Empty secret fields keep existing values. Settings are stored in the private
-aiarr state dataset and picked up by the worker within ten seconds. The API
-key used to log in, storage paths and the production dry-run switch remain in
-the TrueNAS app configuration.
+## Текущий статус — 2026-09-23
+
+В TrueNAS уже работает production-образ `media-acquisition-engine:aaeb441`
+с `MAE_DRY_RUN=false`. Seerr направляет новые фильмы и сериалы в aiarr;
+Radarr и Sonarr удалены после успешной проверки реального скачивания и
+импорта. В qBittorrent сейчас выполняются реальные загрузки, поэтому обновление
+приложения должно сохранять состояние SQLite и продолжать существующие
+торренты.
+
+В работе находится следующий эксплуатационный пакет:
+
+- вход в `/admin` через уже открытую административную сессию Seerr, без ввода
+  API-ключа при каждом обновлении страницы;
+- интерфейс в стиле Seerr: карточки заявок, понятные статусы, прогресс,
+  история действий и краткие русские описания вместо JSON;
+- периодическая сверка заявок с Seerr. Если конкретный запрос действительно
+  удалён из Seerr (подтверждён ответом `404`), aiarr помечает его удалённым,
+  удаляет принадлежащий aiarr файл и связанный torrent только после проверки
+  категории, тега, пути, inode и device;
+- настройки источников, API-ключей и DeepSeek сохраняются на сервере и не
+  запрашиваются повторно при обновлении страницы.
+
+Код пакета готов в рабочей копии (очистка в worker, SSO, UI-карточки, тесты
+`test_seerr_deletion.py`/`test_seerr_sso.py`). До production-развёртывания
+остаются резервная копия SQLite и конфигурации TrueNAS, установка образа и
+живая проверка входа через Seerr и удаления на тестовой заявке.
+DeepSeek для статусов пока не обязателен: базовые описания строятся из
+фактического состояния job, событий, прогресса и импортов, чтобы не добавлять
+галлюцинации в операционный журнал.
+
+Production administration: `http://10.110.111.2:30280/admin`. Сначала войдите
+в Seerr под администратором, затем откройте эту ссылку. API-ключ остаётся
+доступен только для машинных интеграций и аварийной диагностики. Torznab
+источники используют API-ключ; защищённые карточки могут использовать Cookie;
+анонимные источники оставляют оба поля пустыми. Пустые секретные поля сохраняют
+прежние значения. Настройки хранятся в приватном dataset aiarr и подхватываются
+worker в течение десяти секунд.
 
 ```
 uv sync --frozen

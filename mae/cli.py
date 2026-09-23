@@ -46,7 +46,7 @@ def main():
                 worker = Worker(current, db)
                 last_reconcile = 0
                 logging.info('{"event":"runtime_config_reloaded"}')
-            if current.seerr_key.get_secret_value() and time.monotonic() - last_reconcile > 300:
+            if current.seerr_key.get_secret_value() and time.monotonic() - last_reconcile > 60:
                 try:
                     Seerr(current).reconcile(db, current.dry_run)
                 except Exception as exc:

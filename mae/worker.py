@@ -3,6 +3,7 @@ import json
 import logging
 import re
 import shutil
+import stat
 import time
 from pathlib import Path
 
@@ -17,7 +18,7 @@ from mae.jellyfin import Jellyfin
 from mae.parsing import episode_keys, parse_candidate
 from mae.policies import evaluate
 from mae.providers import make_provider
-from mae.verification import probe, publish_hardlink, verify
+from mae.verification import check_path, probe, publish_hardlink, verify
 
 log = logging.getLogger("mae")
 
@@ -39,6 +40,8 @@ class Worker:
             except BlockingIOError:
                 return False
             self.pause_stopped_downloads()
+            if not self.settings.dry_run:
+                self.cleanup_deleted_requests()
             if self.settings.jellyfin_key.get_secret_value():
                 self.reconcile_completed()
             jobs = self.db.execute(
@@ -78,6 +81,79 @@ class Worker:
                 log.warning(
                     json.dumps({"event": "download_pause_failed", "job": job["id"], "type": type(exc).__name__})
                 )
+
+    def cleanup_deleted_requests(self):
+        for job in self.db.deleted_request_cleanups():
+            try:
+                self.cleanup_deleted_request(job)
+            except ValueError as exc:
+                code = str(exc) if re.fullmatch(r"[A-Z_]{1,80}", str(exc)) else type(exc).__name__
+                self.db.block_deleted_request_cleanup(job["id"], code)
+            except Exception as exc:
+                self.db.block_deleted_request_cleanup(job["id"], "SEERR_CLEANUP_RETRY", delay=300)
+                log.warning(json.dumps({"event": "seerr_cleanup_failed", "job": job["id"],
+                                        "type": type(exc).__name__}))
+
+    def cleanup_deleted_request(self, job):
+        """Remove only files this job published and the torrent this job added.
+
+        Every import is re-checked against its journaled device/inode before
+        unlinking; anything unexpected stays on disk and blocks the job.
+        """
+        store = self.settings.store
+        library_roots = (store / "films", store / "serials")
+        imports = self.db.execute(
+            "SELECT * FROM imports WHERE job_id=:id AND state='PUBLISHED'", id=job["id"]
+        )
+        planned = []
+        for row in imports:
+            path = Path(row["destination"])
+            check_path(path, store)
+            if not any(path.is_relative_to(root) and path != root for root in library_roots):
+                raise ValueError("IMPORT_OUTSIDE_LIBRARY")
+            try:
+                current = path.lstat()
+            except FileNotFoundError:
+                planned.append((row, path, None))
+                continue
+            if not stat.S_ISREG(current.st_mode):
+                raise ValueError("IMPORT_NOT_REGULAR_FILE")
+            if row["device"] is None or (current.st_dev, current.st_ino) != (row["device"], row["inode"]):
+                raise ValueError("IMPORT_INODE_MISMATCH")
+            planned.append((row, path, current))
+        if job["torrent_hash"]:
+            shared = self.db.execute(
+                "SELECT 1 FROM jobs WHERE torrent_hash=:hash AND id!=:id LIMIT 1",
+                hash=job["torrent_hash"], id=job["id"],
+            )
+            if shared:
+                raise ValueError("TORRENT_SHARED_WITH_ANOTHER_JOB")
+        # All checks pass before the first destructive action.
+        removed = False
+        for row, path, current in planned:
+            if current is not None:
+                path.unlink()
+                removed = True
+                for parent in path.parents:
+                    if parent in library_roots or not parent.is_relative_to(store):
+                        break
+                    try:
+                        parent.rmdir()  # Only succeeds for directories left empty.
+                    except OSError:
+                        break
+            self.db.execute("DELETE FROM imports WHERE id=:id AND state='PUBLISHED'", id=row["id"])
+            self.db.execute(
+                "INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED',:reason,:now)",
+                id=job["id"], reason="SEERR_FILE_REMOVED", now=time.time(),
+            )
+        if job["torrent_hash"]:
+            self.downloader.delete_owned(job["torrent_hash"], store / "downloads")
+        self.db.finish_deleted_request_cleanup(job["id"])
+        if removed and self.settings.jellyfin_key.get_secret_value():
+            try:
+                Jellyfin(self.settings).refresh()
+            except Exception:
+                pass  # Jellyfin's own scan removes the item later.
 
     def reconcile_completed(self):
         for job in self.db.execute(
