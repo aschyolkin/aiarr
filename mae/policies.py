@@ -30,6 +30,8 @@ def evaluate(candidate, work, policy):
         c.reasons.append("RESOLUTION_NOT_ALLOWED")
     if p.get("video_codec") not in policy.codecs:
         c.unknown.append("compatible_video_codec")
+    if p.get("video_codec_conflict"):
+        c.reasons.append("CODEC_EVIDENCE_CONFLICT")
     if c.release.size is None:
         c.unknown.append("size")
     elif c.release.size > policy.max_bytes:

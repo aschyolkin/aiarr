@@ -27,10 +27,23 @@ def parse_candidate(release, details):
         evidence=[Evidence(id="title", text=release.title, method="guessit-4.4.0"), *details.evidence],
     )
     # Only explicitly scoped audio evidence; MULTI/RUS title suffix is insufficient.
+    card_codecs = set()
     for evidence in details.evidence:
         lines = evidence.text.splitlines()
         audio_block = False
         for line in lines:
+            video = re.match(r"(?i)^\s*(?:Video|Видео)\s*[:：]\s*(.+)", line)
+            if video:
+                codecs = set()
+                if re.search(r"(?i)\b(?:h[ ._-]?264|x264|avc)\b", video[1]):
+                    codecs.add("H.264")
+                if re.search(r"(?i)\b(?:h[ ._-]?265|x265|hevc)\b", video[1]):
+                    codecs.add("H.265")
+                card_codecs.update(codecs)
+                for codec in codecs:
+                    c.claims.append(
+                        Claim(field="video_codec", value=codec, evidence_id=evidence.id, quote=line[:500])
+                    )
             if re.match(r"(?i)^\s*(Audio|Аудио)(?:\s*#?\d+)?\s*$", line):
                 audio_block = True
                 continue
@@ -39,7 +52,7 @@ def parse_candidate(release, details):
             direct_audio = bool(
                 re.match(
                     r"(?i)^\s*(аудио(?:дорожка)?|audio(?: track)?|звук|язык\s+(?:озвучки|аудио))"
-                    r"\s*\d*\s*[:：]", line
+                    r"\s*#?\d*\s*[:：]", line
                 )
             )
             audio_language = audio_block and bool(re.match(r"(?i)^\s*(language|язык)\s*:", line))
@@ -59,6 +72,10 @@ def parse_candidate(release, details):
                         c.claims.append(
                             Claim(field="studio", value=studio, evidence_id=evidence.id, quote=line[:500])
                         )
+    if len(card_codecs) > 1 or (card_codecs and parsed.get("video_codec") not in (None, *card_codecs)):
+        c.parsed["video_codec_conflict"] = True
+    elif card_codecs and not parsed.get("video_codec"):
+        c.parsed["video_codec"] = next(iter(card_codecs))
     return c
 
 

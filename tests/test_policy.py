@@ -44,6 +44,32 @@ def test_scoped_russian(description, movie):
     assert not c.unknown and not c.reasons and c.score
 
 
+def test_numbered_russian_audio_and_video_on_source_card(movie):
+    c = evaluate(
+        candidate(
+            "Видео: MPEG-4 AVC, 1918x802\n"
+            "Аудио #1: Русский: AC3, 6 channels\n"
+            "Аудио #2: Английский: AC3, 6 channels",
+            "Example.2024.1080p.WEB-DL",
+        ),
+        movie,
+        Policy(),
+    )
+    assert not c.unknown and not c.reasons and c.score
+    assert c.parsed["video_codec"] == "H.264"
+    assert any(claim.field == "audio_language" and claim.value == "rus" for claim in c.claims)
+
+
+def test_source_card_codec_disagreement_is_rejected(movie):
+    c = evaluate(
+        candidate("Видео: MPEG-4 AVC\nАудио #1: Русский", "Example.2024.1080p.WEB-DL.H.265"),
+        movie,
+        Policy(),
+    )
+    assert "CODEC_EVIDENCE_CONFLICT" in c.reasons
+    assert not c.score
+
+
 @pytest.mark.parametrize("studio", ["LostFilm", "NewStudio", "AlexFilm", "Red Head Sound", "Flarrow Films"])
 def test_studios_equal_default_weight(studio, movie):
     c = evaluate(candidate("Аудио: русский " + studio), movie, Policy())
