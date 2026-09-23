@@ -40,10 +40,11 @@ class Worker:
             except BlockingIOError:
                 return False
             self.pause_stopped_downloads()
-            if not self.settings.dry_run:
-                self.cleanup_deleted_requests()
             if self.settings.jellyfin_key.get_secret_value():
                 self.reconcile_completed()
+            if not self.settings.dry_run:
+                self.cleanup_deleted_requests()
+                self.delete_orphaned_downloads()
             jobs = self.db.execute(
                 "SELECT * FROM jobs WHERE next_run<=:now AND state NOT IN "
                 "('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED') ORDER BY next_run,id",
@@ -80,6 +81,21 @@ class Worker:
             except Exception as exc:
                 log.warning(
                     json.dumps({"event": "download_pause_failed", "job": job["id"], "type": type(exc).__name__})
+                )
+
+    def delete_orphaned_downloads(self):
+        """Delete qBittorrent's copy for a job that is admin-cancelled or
+        whose Jellyfin item disappeared. Safe even for a published import:
+        the library copy is an independent hardlink, unaffected by deleting
+        the torrent's own files.
+        """
+        for job in self.db.downloads_to_delete():
+            try:
+                self.downloader.delete_owned(job["torrent_hash"], self.settings.store / "downloads")
+                self.db.finish_download_delete(job["id"], job["state"])
+            except Exception as exc:
+                log.warning(
+                    json.dumps({"event": "download_delete_failed", "job": job["id"], "type": type(exc).__name__})
                 )
 
     def cleanup_deleted_requests(self):

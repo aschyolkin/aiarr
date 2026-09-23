@@ -159,7 +159,19 @@ def create_app(settings=None, db=None, seerr=None):
     @app.get("/admin/sources")
     def sources():
         return [
-            {"name": p.name, "protocol": p.protocol, "details_configured": bool(p.details_selector)}
+            {
+                "name": p.name,
+                "protocol": p.protocol,
+                "url": p.url,
+                "trusted_gateway": p.trusted_gateway,
+                "source_host": p.source_host,
+                "trusted_source": p.trusted_source,
+                "details_configured": bool(p.details_selector),
+                "api_key_configured": bool(p.api_key.get_secret_value()),
+                "cookie_configured": bool(p.cookie.get_secret_value()),
+                "encoding": p.encoding,
+                "interval": p.interval,
+            }
             for p in settings.providers
         ]
 

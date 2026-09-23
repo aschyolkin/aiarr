@@ -46,3 +46,18 @@ def test_completed_series_ignores_unmonitored_episode(db):
 
     assert db.observe_completed(db.job(job_id), {"S01E01"})
     assert db.job(job_id)["state"] == "AVAILABLE"
+
+
+def test_library_item_missing_deletes_owned_download(settings, db, movie, respx_mock):
+    from unittest.mock import Mock
+
+    settings = settings.model_copy(update={"jellyfin_key": settings.api_key, "dry_run": False})
+    job_id = db.submit(movie)
+    db.transition(job_id, "AVAILABLE", torrent_hash="a" * 40)
+    respx_mock.get(settings.jellyfin_url + "/Items").mock(return_value=httpx.Response(200, json={"Items": []}))
+    downloader = Mock()
+    Worker(settings, db, [], downloader).tick()
+    assert db.job(job_id)["reason"] == "LIBRARY_ITEM_MISSING"
+    downloader.delete_owned.assert_called_once_with("a" * 40, settings.store / "downloads")
+    job = db.job(job_id)
+    assert (job["cancel_pause_done"], job["torrent_hash"]) == (1, None)

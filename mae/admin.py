@@ -25,6 +25,7 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 .muted{color:#9ca3af;font-size:.9rem;margin:.4rem 0 0}
 .cand{font-size:.9rem}.cand td,.cand th{padding:.45rem;vertical-align:top}.cand tr.fit td{background:#064e3b33}
 .cand tr.chosen td{background:#065f4666}.cand .pct{white-space:nowrap;font-weight:600}.cand .title{overflow-wrap:anywhere;min-width:14rem}
+.cand td.mono{font-family:ui-monospace,monospace;font-size:.85rem}
 .cand img{width:64px;max-height:96px;object-fit:cover;border-radius:.3rem;display:block}
 </style>
 <h1>aiarr</h1><p>Очередь, доказательства выбора и диагностика импорта</p>
@@ -36,7 +37,10 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <button id="refresh">Обновить</button><button id="logout">Выйти</button>
 <p id="mode"></p>
 <section><div id="jobs" class="cards"></div></section>
-<details><summary>Источники</summary><pre id="sources"></pre></details>
+<details open><summary>Источники поиска</summary><p id="sources-summary" class="hint"></p>
+<section><table class="cand"><thead><tr><th>Имя</th><th>Протокол</th><th>Адрес</th><th>Доступ</th>
+<th>Карточка релиза</th><th>Интервал, сек</th></tr></thead><tbody id="sources"></tbody></table></section>
+<p class="hint">Добавить или изменить источник — в «Настройки aiarr» → «Источники релизов» ниже.</p></details>
 <details><summary>Профиль качества</summary><pre id="profiles"></pre></details>
 <details id="config-panel"><summary>Настройки aiarr</summary>
 <p class="hint">Изменения сохраняются в состоянии aiarr и применяются к новым попыткам обработки. Пустые поля ключей сохраняют прежние значения.</p>
@@ -86,7 +90,7 @@ textarea{width:95%;min-height:5rem}#config-status{min-height:1.4em}
 <h3>Ход заказа</h3><ol id="timeline" class="timeline"></ol>
 <div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
 <button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
-<p class="hint">Отмена в aiarr сохраняет торрент и файлы. Удаление заявки в Seerr удаляет файлы и торрент этой заявки после проверки владельца.</p>
+<p class="hint">Отмена в aiarr и пропажа файла из Jellyfin удаляют закачку из qBittorrent (уже добавленные в библиотеку файлы не трогаются — это отдельная жёсткая ссылка). Удаление заявки в Seerr удаляет ещё и файлы этой заявки, после проверки владельца.</p>
 <details open><summary>Кандидаты и причины выбора</summary><p id="cand-summary" class="hint"></p>
 <section><table class="cand"><thead><tr><th></th><th>Релиз</th><th>Источник</th><th>Качество</th><th>Кодек</th><th>Размер</th>
 <th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section></details>
@@ -205,7 +209,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  WAITING_FOR_JELLYFIN:'Файл добавлен, ожидается сканирование Jellyfin',
  ALREADY_IN_LIBRARY:'Уже есть в Jellyfin',DRY_RUN_SELECTED:'Релиз найден, загрузка отключена',
  INSUFFICIENT_SPACE:'Недостаточно места на диске',DOWNLOAD_QUEUE_LIMIT:'Очередь загрузок заполнена',
- VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного',RUSSIAN_AUDIO_NOT_TAGGED:'Не подтверждена русская аудиодорожка',
+ VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного',RUSSIAN_AUDIO_NOT_TAGGED:'Не подтверждена русская аудиодорожка',DOWNLOAD_REMOVED:'Закачка удалена из qBittorrent',
  SEERR_REQUEST_DELETED:'Заявка удалена в Seerr, файлы удаляются',SEERR_FILE_REMOVED:'Файл удалён из библиотеки',
  SEERR_CLEANUP_DONE:'Файлы и торрент удалены',SEERR_CLEANUP_RETRY:'Удаление повторится позже',
  IMPORT_INODE_MISMATCH:'Файл в библиотеке заменён вручную — не удалён',
@@ -327,6 +331,24 @@ async function inspect(id){
  byId('retry').disabled=!['FAILED','NEEDS_REVIEW','AUTH_REQUIRED','WAITING_FOR_RELEASE','RETRY_SCHEDULED'].includes(data.job.state);
  byId('cancel').disabled=['AVAILABLE','CANCELLED'].includes(data.job.state);
 }
+const protocolNames={torznab:'Torznab/Prowlarr',json:'Собственный JSON',nnmclub:'NNM-Club',rutor:'Rutor'};
+function renderSources(sources){
+ byId('sources-summary').textContent=sources.length?'Поиск идёт по '+sources.length+' '+
+  (sources.length===1?'источнику':sources.length<5?'источникам':'источникам')+'.':'Источники не настроены.';
+ const body=byId('sources');body.replaceChildren();
+ for(const s of sources){
+  const tr=document.createElement('tr');
+  const access=s.protocol==='nnmclub'||s.protocol==='rutor'&&!s.api_key_configured&&!s.cookie_configured?'анонимный':
+   [s.api_key_configured?'API-ключ':null,s.cookie_configured?'Cookie':null].filter(Boolean).join(' + ')||'анонимный';
+  const card=s.details_configured?(s.trusted_source?'проверенная карточка':'карточка')+
+   (s.source_host?' ('+s.source_host+')':''):'нет';
+  const cells=[[s.name,''],[protocolNames[s.protocol]||s.protocol,''],[s.url,'mono'],
+   [access,''],[card,''],[String(s.interval),'']];
+  for(const [value,cls] of cells){const td=document.createElement('td');td.textContent=value;
+   if(cls)td.className=cls;tr.append(td);}
+  body.append(tr);
+ }
+}
 async function refresh(){
  const [overview,sources,profiles,metrics]=await Promise.all([
   api('/admin/overview'),api('/admin/sources'),api('/admin/profiles'),api('/admin/metrics')]);
@@ -346,7 +368,7 @@ async function refresh(){
    bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';card.append(bar);}
   card.onclick=()=>run(()=>inspect(job.id));byId('jobs').append(card);
  }
- show('sources',sources);show('profiles',profiles);show('metrics',metrics);
+ renderSources(sources);show('profiles',profiles);show('metrics',metrics);
  if(config===null){config=await api('/admin/config');renderConfig();}
  if(selected!==null)await inspect(selected);
 }
@@ -375,7 +397,7 @@ byId('logout').onclick=()=>{clearSession();byId('login').hidden=false;
 setInterval(()=>{if(signedIn&&!busy&&byId('dashboard').hidden===false)run(refresh);},15000);
 for(const action of ['retry','cancel'])byId(action).onclick=()=>run(async()=>{
  if(selected===null)return;
- if(!confirm(action==='cancel'?'Отменить это задание? Торрент и файлы сохранятся.':'Повторить обработку этого задания?'))return;
+ if(!confirm(action==='cancel'?'Отменить это задание? Закачка в qBittorrent будет удалена; уже импортированные файлы останутся.':'Повторить обработку этого задания?'))return;
  await api('/admin/jobs/'+selected+'/'+action,'POST');await refresh();
 });
 </script></html>'''

@@ -185,13 +185,45 @@ class Database:
         return bool(changed.rowcount)
 
     def downloads_to_pause(self):
+        # Cancellations that fully delete the download (admin cancel, a Seerr
+        # request confirmed deleted) are handled by downloads_to_delete
+        # instead; only a reversible/automatic state retains the torrent.
         return self.execute(
             "SELECT id,torrent_hash FROM jobs WHERE ((state='CANCELLED' "
-            "AND reason!='SEERR_REQUEST_DELETED') OR "
+            "AND reason NOT IN ('SEERR_REQUEST_DELETED','ADMIN_CANCELLED')) OR "
             "(state='NEEDS_REVIEW' AND reason IN "
             "('NO_MONITORED_EPISODES','EPISODE_MONITORING_CHANGED'))) AND torrent_hash IS NOT NULL "
             "AND cancel_pause_done=0 ORDER BY id"
         )
+
+    def downloads_to_delete(self):
+        # An admin cancel or a library item that disappeared from Jellyfin
+        # both mean this job's download is no longer wanted. Deleting it from
+        # qBittorrent is safe even for a partially or fully imported job: an
+        # import is a hardlink, a second independent directory entry to the
+        # same file, so removing qBittorrent's own copy never touches the
+        # published library copy.
+        return self.execute(
+            "SELECT id,torrent_hash,state FROM jobs WHERE "
+            "((state='CANCELLED' AND reason='ADMIN_CANCELLED') OR "
+            "(state='NEEDS_REVIEW' AND reason='LIBRARY_ITEM_MISSING')) "
+            "AND torrent_hash IS NOT NULL AND cancel_pause_done=0 ORDER BY id"
+        )
+
+    def finish_download_delete(self, job_id, state):
+        now = time.time()
+        with self.engine.begin() as conn:
+            changed = conn.execute(
+                text("UPDATE jobs SET cancel_pause_done=1,torrent_hash=NULL,reserved=0 "
+                     "WHERE id=:id AND cancel_pause_done=0"),
+                {"id": job_id},
+            )
+            if changed.rowcount:
+                conn.execute(
+                    text("INSERT INTO events(job_id,state,reason,created) "
+                         "VALUES(:id,:state,'DOWNLOAD_REMOVED',:now)"),
+                    {"id": job_id, "state": state, "now": now},
+                )
 
     def deleted_request_cleanups(self):
         return self.execute(

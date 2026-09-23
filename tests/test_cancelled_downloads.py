@@ -4,26 +4,42 @@ from mae.domain import Work
 from mae.worker import Worker
 
 
-def test_cancelled_owned_download_is_paused_once(settings, db, movie):
+def test_admin_cancel_deletes_owned_download_once(settings, db, movie):
+    settings = settings.model_copy(update={"dry_run": False})
     job_id = db.submit(movie, False)
     db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
     db.cancel_from_admin(job_id)
     downloader = Mock()
     Worker(settings, db, [], downloader).tick()
-    downloader.pause.assert_called_once_with("a" * 40)
-    assert db.job(job_id)["cancel_pause_done"] == 1
+    downloader.delete_owned.assert_called_once_with("a" * 40, settings.store / "downloads")
+    downloader.pause.assert_not_called()
+    job = db.job(job_id)
+    assert (job["cancel_pause_done"], job["torrent_hash"]) == (1, None)
     Worker(settings, db, [], downloader).tick()
-    downloader.pause.assert_called_once()
+    downloader.delete_owned.assert_called_once()
 
 
-def test_pause_failure_remains_pending_for_retry(settings, db, movie):
+def test_admin_cancel_delete_failure_remains_pending_for_retry(settings, db, movie):
+    settings = settings.model_copy(update={"dry_run": False})
     job_id = db.submit(movie, False)
     db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
     db.cancel_from_admin(job_id)
     downloader = Mock()
-    downloader.pause.side_effect = RuntimeError("offline")
+    downloader.delete_owned.side_effect = RuntimeError("offline")
     Worker(settings, db, [], downloader).tick()
-    assert db.job(job_id)["cancel_pause_done"] == 0
+    job = db.job(job_id)
+    assert (job["cancel_pause_done"], job["torrent_hash"]) == (0, "a" * 40)
+
+
+def test_dry_run_never_deletes_an_admin_cancelled_download(settings, db, movie):
+    job_id = db.submit(movie, False)
+    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40)
+    db.cancel_from_admin(job_id)
+    downloader = Mock()
+    Worker(settings, db, [], downloader).tick()
+    downloader.delete_owned.assert_not_called()
+    downloader.pause.assert_not_called()
+    assert db.job(job_id)["torrent_hash"] == "a" * 40
 
 
 def test_unmonitor_last_episode_pauses_inflight_download(settings, db):
