@@ -25,6 +25,27 @@ def test_probe_contradicts_release(width, expected, reason):
         verify(probe, Policy(), expected)
 
 
+@pytest.mark.parametrize("width,height,expected_resolution", [
+    (1918, 802, "1080p"),
+    (3840, 1600, "2160p"),
+])
+def test_cinematic_crop_preserves_resolution_class(width, height, expected_resolution):
+    data = {"format": {"duration": "3600"}, "streams": [
+        {"codec_type": "video", "codec_name": "h264", "width": width, "height": height},
+        {"codec_type": "audio", "tags": {"language": "rus"}},
+    ]}
+    assert verify(data, Policy(), {"screen_size": expected_resolution, "video_codec": "H.264"}) == data
+
+
+def test_excessive_crop_is_still_below_policy():
+    data = {"format": {"duration": "3600"}, "streams": [
+        {"codec_type": "video", "codec_name": "h264", "width": 1918, "height": 600},
+        {"codec_type": "audio", "tags": {"language": "rus"}},
+    ]}
+    with pytest.raises(ValueError, match="VIDEO_RESOLUTION_BELOW_POLICY"):
+        verify(data, Policy(), {"screen_size": "1080p", "video_codec": "H.264"})
+
+
 def test_new_episode_reopens_completed_series(db):
     work = Work(kind="series", external_id=9, title="Example", seasons=[1], episodes=["S01E01"])
     job_id = db.submit(work)
