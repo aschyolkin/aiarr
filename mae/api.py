@@ -7,17 +7,27 @@ import shutil
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.responses import HTMLResponse, JSONResponse
+from pydantic import BaseModel
 
 from mae.admin import ADMIN_HTML
 from mae.config import Settings
 from mae.db import Database
 from mae.domain import Work
+from mae.runtime_config import RuntimeConfig
 from mae.seerr import Seerr
 
 
+class ConfigUpdate(BaseModel):
+    revision: str
+    settings: dict
+
+
 def create_app(settings=None, db=None, seerr=None):
-    settings = settings or Settings()
+    base_settings = settings or Settings()
+    config = RuntimeConfig(base_settings)
+    settings = config.load()
     db = db or Database(settings.state_dir)
+    injected_seerr = seerr is not None
     seerr = seerr or Seerr(settings)
 
     def authenticate(request: Request):
@@ -74,10 +84,32 @@ def create_app(settings=None, db=None, seerr=None):
 
     @app.get("/admin/jobs/{job_id}")
     def detail(job_id: int):
+        job = db.job(job_id)
+        download = None
+        if job["torrent_hash"]:
+            try:
+                from mae.downloads import Downloader
+
+                torrent = Downloader(settings).info(job["torrent_hash"])
+                if torrent:
+                    download = {
+                        "progress": float(torrent.get("progress", 0)),
+                        "state": torrent.get("state"),
+                        "download_speed": int(torrent.get("dlspeed", 0)),
+                        "eta": int(torrent.get("eta", 0)),
+                        "remaining_bytes": int(torrent.get("amount_left", 0)),
+                    }
+            except Exception:
+                # The job journal remains available when qBittorrent is unreachable.
+                pass
         return {
-            "job": db.job(job_id),
+            "job": job,
             "imports": db.execute("SELECT * FROM imports WHERE job_id=:id", id=job_id),
-            "events": db.execute("SELECT * FROM events WHERE job_id=:id", id=job_id),
+            "events": db.execute("SELECT * FROM events WHERE job_id=:id ORDER BY created,id", id=job_id),
+            "episodes": db.execute(
+                "SELECT episode,available,monitored FROM episodes WHERE job_id=:id ORDER BY episode", id=job_id
+            ),
+            "download": download,
         }
 
     @app.get("/admin/profiles")
@@ -90,6 +122,23 @@ def create_app(settings=None, db=None, seerr=None):
             {"name": p.name, "protocol": p.protocol, "details_configured": bool(p.details_selector)}
             for p in settings.providers
         ]
+
+    @app.get("/admin/config")
+    def get_config():
+        return config.snapshot()
+
+    @app.put("/admin/config")
+    def put_config(update: ConfigUpdate):
+        nonlocal settings, seerr
+        try:
+            result = config.save(update.revision, update.settings)
+            settings = config.load()
+            if not injected_seerr:
+                seerr = Seerr(settings)
+            return result
+        except ValueError as exc:
+            code = str(exc)
+            raise HTTPException(409 if code == "CONFIG_CHANGED_RELOAD" else 422, code) from None
 
     @app.post("/admin/jobs/{job_id}/retry")
     def retry(job_id: int):
