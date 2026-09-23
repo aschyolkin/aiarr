@@ -3,19 +3,25 @@
 Read ACCEPTANCE.md for the production acceptance record and rollback data.
 
 Latest verified checkpoint (2026-09-23): aiarr runs
-`media-acquisition-engine:59523c2` with `MAE_DRY_RUN=false` and NNM-Club plus
+`media-acquisition-engine:dd5b275` with `MAE_DRY_RUN=false` and NNM-Club plus
 BigFAN providers. Seerr defaults route movies and series to aiarr. A real
 Silo S03E10 was downloaded selectively, hardlinked into the existing series
 folder, and recognized by Jellyfin. Radarr and Sonarr apps were deleted after
-this check. Their private backups and ZFS snapshots remain available; see the
-2026-09-23 completion section in ACCEPTANCE.md. The historical deployment
-sections below describe earlier staged states.
+this check. Their historical Seerr entries point to aiarr so the request list
+does not warn about missing services. The web UI now shows order progress and
+edits operational settings. Private backups and ZFS snapshots remain
+available; see the 2026-09-23 sections in ACCEPTANCE.md. The historical
+deployment sections below describe earlier staged states.
 
 Administrative login: `http://10.110.111.2:30280/admin`. Supply the existing
 aiarr API key in the password field, never in a bookmark or shared URL. The
-dashboard shows queue, candidates/evidence, errors, import history, profiles,
-sources and metrics, with authenticated retry/cancel actions. It does not
-override mandatory constraints or mark files available manually.
+dashboard shows queue, readable order history, live torrent progress, episode
+coverage, evidence and metrics, with authenticated retry/cancel actions. Open
+**Настройки aiarr** to add/remove sources, update API keys or Cookies, quality,
+DeepSeek key and queue limits. Blank secret fields preserve their current
+values. Settings are saved in the private state dataset and loaded by the
+worker within ten seconds. The login API key, media paths and dry-run switch
+remain in the TrueNAS app configuration.
 TrueNAS detected 25.10.7; its [Custom App documentation](https://www.truenas.com/docs/scale/25.10/scaleuireference/apps/installcustomappscreens/)
 supports Compose YAML. Do not install Python packages in the TrueNAS base OS.
 

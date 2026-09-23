@@ -1,5 +1,42 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Seerr repair and live web administration — 2026-09-23
+
+Seerr's request list calls `getProfiles()` on **every** configured Radarr and
+Sonarr service, including non-default entries with sync disabled. After app
+deletion, its historical ID 0 entries caused the user-visible connection
+warning. With a prior Seerr ZFS snapshot
+`data/ix-apps/app_mounts/seerr/config@pre-aiarr-legacy-repoint-20260923`, the
+ID 0 entries were repointed to aiarr's compatible API and left non-default,
+`syncEnabled=false`, `preventSearch=true`. Historical Seerr requests retain
+their `serverId=0`. Two live request-list queries returned HTTP 200 and empty
+Radarr/Sonarr `serviceErrors`; this was reconfirmed after deployment.
+
+Image `media-acquisition-engine:dd5b275` is now deployed (TrueNAS update job
+49979 `SUCCESS`; image ID
+`sha256:5c513257e33244eecc716c748306832de9ac7184044414747df751d0a4eaa680`).
+Source archive SHA-256:
+`2dfcdaed580d92f6afc0acd54c711acd652557d8b651c9db3d389d4006faf3e7`.
+The authenticated `/admin` page and `/admin/config` both returned HTTP 200;
+the configuration response omitted API keys and credentials. The order detail
+reported Silo S03E01–E10 available, S04E01 missing, and the S03E10 import
+`PUBLISHED`. Its current state is `WAITING_FOR_RELEASE/NO_PROVEN_CANDIDATE`
+after a later search for S04E01. The page now displays an order timeline,
+search decisions, verified release facts, torrent progress and episode
+coverage. It also edits source adapters (anonymous or API-key/Cookie based),
+quality, integrations, DeepSeek credentials and queue limits.
+
+A reversible live settings test changed `max_downloads` from 2 to 3 and back to
+2 via the authenticated API. The worker logged two `runtime_config_reloaded`
+events without restart; the worker's effective setting returned to 2. API
+container is healthy; `/health` returned HTTP 200, `dry_run=false`. Private
+app configuration and verified SQLite backup are at
+`/mnt/data/apps/aiarr-webui-20260923`; snapshots
+`data/apps/aiarr-state@pre-webui-20260923` and
+`data/ix-apps/app_configs@pre-aiarr-webui-20260923` were taken before the
+deployment. Offline validation: 238 tests passed, Ruff clean, admin JavaScript
+syntax check passed.
+
 ## Production replacement completed — 2026-09-23
 
 TrueNAS runs `media-acquisition-engine:59523c2` with `MAE_DRY_RUN=false`.
