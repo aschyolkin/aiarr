@@ -180,12 +180,21 @@ class NNMClubProvider:
         # httpx treats params={} as replacing the URL query, dropping topic IDs.
         return self.http.get(urljoin(self.config.url, path), params=params or None)
 
-    def search(self, query):
-        raw = self._get("/forum/tracker.php", nm=query.title)
+    @staticmethod
+    def _decode(raw):
+        # NNM's current cp1251 pages contain occasional 0x98, which has no
+        # character in that encoding. Replace only this undefined byte; all
+        # other decoding errors and heavily corrupted pages still fail closed.
+        if raw.count(b"\x98") > 32:
+            raise ProviderError(Outcome.PARSER_BROKEN)
         try:
-            soup = BeautifulSoup(raw.decode("windows-1251", errors="strict"), "html.parser")
+            return raw.replace(b"\x98", b" ").decode("windows-1251", errors="strict")
         except UnicodeError:
             raise ProviderError(Outcome.PARSER_BROKEN) from None
+
+    def search(self, query):
+        raw = self._get("/forum/tracker.php", nm=query.title)
+        soup = BeautifulSoup(self._decode(raw), "html.parser")
         if soup.select_one('input[type="password"]'):
             raise ProviderError(Outcome.AUTH_REQUIRED)
         results = []
@@ -230,10 +239,7 @@ class NNMClubProvider:
         ):
             raise ProviderError(Outcome.ACCESS_DENIED)
         raw = self._get(release.details_url)
-        try:
-            soup = BeautifulSoup(raw.decode("windows-1251", errors="strict"), "html.parser")
-        except UnicodeError:
-            raise ProviderError(Outcome.PARSER_BROKEN) from None
+        soup = BeautifulSoup(self._decode(raw), "html.parser")
         # NNM's current phpBB layout uses postbody. Only the first post is
         # release evidence; replies must not contribute technical claims.
         card = soup.select_one(".post_body, .postbody")

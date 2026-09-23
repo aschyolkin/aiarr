@@ -105,6 +105,28 @@ def test_nnmclub_anonymous_search_card_and_handle():
     assert "Русский" in provider.fetch_details(result).evidence[0].text
 
 
+def test_nnmclub_undefined_cp1251_byte_does_not_hide_valid_results():
+    from mae.domain import Outcome, ProviderError
+
+    config = ProviderConfig(name="nnm", protocol="nnmclub", url="https://nnmclub.to")
+    search = (
+        b'<form id="search_form"></form>\x98<table><tr><td>'
+        b'<a class="topictitle" href="viewtopic.php?t=42">Example.2026.1080p</a>'
+        b'<a href="download.php?id=7">DL</a></td></tr></table>'
+    )
+    card = '<div class="post_body">Аудио: Русский</div>'.encode("windows-1251") + b"\x98"
+    provider = NNMClubProvider(config, HTTP({
+        "https://nnmclub.to/forum/tracker.php": search,
+        "https://nnmclub.to/forum/viewtopic.php?t=42": card,
+    }))
+    result = provider.search(Work(kind="movie", external_id=1, title="Example"))
+    assert len(result) == 1
+    assert "Русский" in provider.fetch_details(result[0]).evidence[0].text
+    with pytest.raises(ProviderError) as error:
+        provider._decode(search + b"\x98" * 33)
+    assert error.value.outcome == Outcome.PARSER_BROKEN
+
+
 @pytest.mark.parametrize(
     "config",
     [
