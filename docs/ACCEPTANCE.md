@@ -1,6 +1,41 @@
 # Acceptance checkpoint — 2026-09-09
 
-## Production replacement preflight — 2026-09-23
+## Production replacement completed — 2026-09-23
+
+TrueNAS runs `media-acquisition-engine:59523c2` with `MAE_DRY_RUN=false`.
+The image update job 49813 succeeded; authenticated API health returned HTTP
+200, `status=OK`, `dry_run=false`. Radarr and Sonarr were stopped and deleted
+through TrueNAS jobs 49819 and 49820, both `SUCCESS`. `app.query` reports both
+absent; aiarr, Seerr, Jellyfin, qBittorrent, and Prowlarr report `RUNNING`.
+Seerr's default movie and series services are aiarr (ID 1). Historical service
+records (ID 0) remain for existing requests, with `syncEnabled=false` and
+`preventSearch=true`.
+
+A real NNM-Club Silo season-three torrent was added once to qBittorrent.
+Only S03E10 had nonzero file priority; S03E01–E09 were skipped. The selected
+5,234,521,556-byte H.264 file has a 1918×802 cropped picture and Russian
+audio metadata. It passed the deployed media probe and was published as a
+verified hardlink at
+`/data/store/serials/Silo/Season 3/Silo - S03E10.mkv` (`nlink=2`). Jellyfin
+reports S03E10 in coverage. The aiarr import journal records `PUBLISHED`, and
+the series job is `WAITING_FOR_RELEASE/PARTIAL_SEASON` because S04E01 is still
+missing. The approved Spider-Man: Brand New Day movie job is live but remains
+`WAITING_FOR_RELEASE/NO_PROVEN_CANDIDATE`. Both jobs have `dry_run=0`.
+qBittorrent retains the one complete aiarr torrent at progress 1.0 for seeding.
+
+Before cutover, private app configuration and verified SQLite backups were
+saved at `/mnt/data/apps/aiarr-cutover-20260923`; a further aiarr backup was
+saved before the partial-pack download. ZFS snapshots include
+`data/ix-apps/app_mounts/radarr/config@pre-aiarr-cutover-20260923`,
+`data/ix-apps/app_mounts/sonarr/config@pre-aiarr-cutover-20260923`,
+`data/ix-apps/app_mounts/seerr/config@pre-aiarr-cutover-20260923`,
+`data/ix-apps/app_configs@pre-aiarr-cutover-20260923`, and
+`data/apps/aiarr-state@pre-aiarr-cutover-20260923`. App deletion used
+`remove_images=false` and `remove_ix_volumes=false`; retained data can support
+a deliberate rollback. Offline validation for the deployed commit: 232 tests
+passed and Ruff clean.
+
+## Historical production replacement preflight — 2026-09-23
 
 User authorized replacing and deleting Radarr/Sonarr. The cutover is not yet
 safe: the two current approved production works have no policy-proven release.
