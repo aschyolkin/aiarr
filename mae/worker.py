@@ -353,11 +353,12 @@ class Worker:
             paths.append((source, data, keys))
         if not paths or (work.kind == "movie" and len(paths) != 1):
             raise ValueError("AMBIGUOUS_MEDIA_FILES")
+        series_folder = Jellyfin(self.settings).existing_series_folder(work) if work.kind == "series" else None
         self.db.transition(job["id"], "IMPORTING")
         # All files have been probed before the first publication.
         for source, data, keys in paths:
             episode = "+".join(keys) if keys else None
-            destination = destination_for(work, source, self.settings.store, episode)
+            destination = destination_for(work, source, self.settings.store, episode, series_folder)
             self.db.execute(
                 "INSERT OR IGNORE INTO imports(job_id,source,destination,episode,state,probe) "
                 "VALUES(:id,:source,:dest,:episode,'PREPARED',:probe)",

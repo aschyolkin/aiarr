@@ -32,3 +32,23 @@ def test_combined_episode_name_has_exact_contiguous_range(movie):
     series = movie.model_copy(update={"kind": "series"})
     path = destination_for(series, Path("release.mkv"), Path("/data/store"), "S02E01+S02E02")
     assert path.name == "Example - S02E01-E02.mkv"
+
+
+def test_existing_series_folder_and_season_are_reused(tmp_path, movie):
+    root = tmp_path / "store"
+    season = root / "serials" / "Silo" / "Season 3"
+    season.mkdir(parents=True)
+    work = movie.model_copy(update={"kind": "series", "title": "Укрытие", "seasons": [3]})
+
+    result = destination_for(work, Path("release.mkv"), root, "S03E10", season.parent)
+
+    assert result == season / "Silo - S03E10.mkv"
+
+
+def test_existing_series_folder_must_be_inside_store(tmp_path, movie):
+    root = tmp_path / "store"
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    work = movie.model_copy(update={"kind": "series"})
+    with pytest.raises(ValueError, match="LIBRARY_SERIES_PATH_UNSAFE"):
+        destination_for(work, Path("release.mkv"), root, "S01E01", outside)

@@ -1,4 +1,8 @@
+from pathlib import Path
+
 import httpx
+
+from mae.verification import check_path
 
 
 class Jellyfin:
@@ -60,6 +64,35 @@ class Jellyfin:
                         continue
                     coverage.update(f"S{season:02d}E{ep:02d}" for ep in range(number, end + 1))
             return coverage
+
+    def existing_series_folder(self, work):
+        if work.kind != "series":
+            return None
+        with self.client() as client:
+            response = client.get(
+                "/Items",
+                params={
+                    "Recursive": "true", "Fields": "ProviderIds,Path",
+                    "AnyProviderIdEquals": f"Tvdb.{work.external_id}",
+                    "IncludeItemTypes": "Series",
+                },
+            )
+            response.raise_for_status()
+        paths = {
+            item.get("Path")
+            for item in response.json().get("Items", [])
+            if str(item.get("ProviderIds", {}).get("Tvdb")) == str(work.external_id)
+            and isinstance(item.get("Path"), str) and item.get("Path")
+        }
+        if len(paths) > 1:
+            raise ValueError("AMBIGUOUS_LIBRARY_SERIES_FOLDER")
+        if not paths:
+            return None
+        folder = Path(next(iter(paths)))
+        if folder.parent != self.settings.store / "serials" or not folder.is_dir():
+            raise ValueError("LIBRARY_SERIES_PATH_UNSAFE")
+        check_path(folder, self.settings.store)
+        return folder
 
     def refresh(self):
         with self.client() as client:

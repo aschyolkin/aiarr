@@ -1,4 +1,5 @@
 import httpx
+import pytest
 
 from mae.domain import Work
 from mae.jellyfin import Jellyfin
@@ -41,3 +42,22 @@ def test_partial_and_combined_episode_coverage(settings, respx_mock):
         )
     )
     assert Jellyfin(settings).coverage(work) == {"S01E01", "S01E02"}
+
+
+def test_existing_series_folder_uses_verified_provider_id(settings, tmp_path, respx_mock):
+    root = tmp_path / "store"
+    folder = root / "serials" / "Silo"
+    folder.mkdir(parents=True)
+    settings = settings.model_copy(update={"store": root, "jellyfin_key": settings.api_key})
+    work = Work(kind="series", external_id=403245, title="Укрытие", seasons=[3])
+    route = respx_mock.get(settings.jellyfin_url + "/Items")
+    route.mock(return_value=httpx.Response(200, json={"Items": [
+        {"ProviderIds": {"Tvdb": "403245"}, "Path": str(folder)},
+        {"ProviderIds": {"Tvdb": "other"}, "Path": str(tmp_path / "outside")},
+    ]}))
+    assert Jellyfin(settings).existing_series_folder(work) == folder
+    route.mock(return_value=httpx.Response(200, json={"Items": [
+        {"ProviderIds": {"Tvdb": "403245"}, "Path": str(tmp_path / "outside")},
+    ]}))
+    with pytest.raises(ValueError, match="LIBRARY_SERIES_PATH_UNSAFE"):
+        Jellyfin(settings).existing_series_folder(work)
