@@ -71,7 +71,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <h3>Трекеры и студии</h3>
 <section><table class="cand"><thead><tr><th>Источник</th><th>Как ищем</th><th>Состояние</th><th>Вход</th></tr></thead>
 <tbody id="known-sources"></tbody></table></section>
-<p class="hint">Логин и пароль RuTracker.org и Kinozal.tv хранятся в Prowlarr: aiarr передаёт их туда, Prowlarr сразу проверяет вход на сайте. Пароль после сохранения не показывается.</p>
+<p class="hint">Логин и пароль RuTracker.org и Kinozal.tv хранятся в Prowlarr: aiarr передаёт их туда, Prowlarr сразу проверяет вход на сайте. Пароль после сохранения не показывается. Зеркало трекера из Prowlarr выбирается из адресов, которые знает Prowlarr для этого трекера; адрес источника, который aiarr опрашивает сам (протоколы nnmclub/rutor), меняется в поле URL ниже.</p>
 <h3>Подключённые к aiarr</h3>
 <section><table class="cand"><thead><tr><th>Имя</th><th>Протокол</th><th>Адрес</th><th>Доступ</th>
 <th>Карточка релиза</th><th>Интервал, сек</th></tr></thead><tbody id="sources"></tbody></table></section>
@@ -377,7 +377,7 @@ const KNOWN=[
  {name:'NewStudio',match:/newstudio/i,how:'Prowlarr, только сериалы'},
  {name:'LostFilm.tv',studio:true},{name:'AlexFilm',studio:true},
  {name:'Red Head Sound',studio:true},{name:'Flarrow Films',studio:true}];
-const loginChecks={};
+const loginChecks={},mirrorChecks={};
 const when=value=>value?new Date(value).toLocaleString('ru-RU'):'';
 function renderKnownSources(sources,indexers){
  const body=byId('known-sources');body.replaceChildren();
@@ -409,6 +409,20 @@ function renderKnownSources(sources,indexers){
     pass.value='';await refresh();});
    box.append(user,pass,save,mark);
   }else if(!k.studio&&(provider||idx))box.append('вход не нужен');
+  if(idx?.mirrors?.length>1){
+   const pick=document.createElement('select');pick.title='Зеркало';
+   for(const url of idx.mirrors){const o=document.createElement('option');o.value=url;o.textContent=url;
+    o.selected=url===idx.base_url;pick.append(o);}
+   const apply=document.createElement('button');apply.type='button';apply.textContent='Сменить зеркало';
+   const note=document.createElement('span');const check=mirrorChecks[idx.indexer_id];
+   if(check)note.textContent=check.ok?'✅ зеркало работает':'❌ '+check.error;
+   apply.onclick=()=>run(async()=>{note.textContent='⏳ проверяем зеркало…';
+    try{await api('/admin/indexers/'+idx.indexer_id+'/mirror','PUT',{base_url:pick.value});
+     mirrorChecks[idx.indexer_id]={ok:true};}
+    catch(error){mirrorChecks[idx.indexer_id]={ok:false,error:error.message};}
+    await refresh();});
+   const row=document.createElement('div');row.className='login';row.append('Зеркало:',pick,apply,note);box.append(row);
+  }else if(idx?.base_url){const row=document.createElement('div');row.className='muted';row.textContent='Адрес: '+idx.base_url;box.append(row);}
   if(idx&&!provider){const attach=document.createElement('button');attach.type='button';attach.textContent='Подключить к aiarr';
    attach.onclick=()=>run(async()=>{if(!confirm('Подключить '+k.name+' как источник поиска?'))return;
     await api('/admin/indexers/'+idx.indexer_id+'/attach','POST');config=null;await refresh();

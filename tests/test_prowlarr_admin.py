@@ -65,3 +65,17 @@ def test_attach_adds_torznab_source_with_gateway_key(settings, db, respx_mock):
     assert added.url == BASE + "/12/api" and added.trusted_gateway
     assert added.api_key.get_secret_value() == "k" * 32
     assert client.post("/admin/indexers/12/attach").status_code == 409
+
+
+def test_mirror_switch_only_to_known_addresses(settings, db, respx_mock):
+    client = client_for(settings, db)
+    data = indexer(11, "Kinozal", True)
+    data["indexerUrls"] = ["https://kinozal.me/", "https://kinozal.guru/"]
+    data["fields"][0] = {"name": "baseUrl", "value": "https://kinozal.me/"}
+    respx_mock.get(BASE + "/api/v1/indexer/11").mock(return_value=httpx.Response(200, json=data))
+    put = respx_mock.put(BASE + "/api/v1/indexer/11").mock(return_value=httpx.Response(202, json={}))
+    assert client.put("/admin/indexers/11/mirror", json={"base_url": "https://evil.test/"}).status_code == 400
+    assert not put.called
+    assert client.put("/admin/indexers/11/mirror", json={"base_url": "https://kinozal.guru"}).json()["saved"]
+    sent = {f["name"]: f.get("value") for f in json.loads(put.calls[0].request.content)["fields"]}
+    assert sent["baseUrl"] == "https://kinozal.guru/"

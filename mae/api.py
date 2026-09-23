@@ -24,6 +24,10 @@ class ConfigUpdate(BaseModel):
     settings: dict
 
 
+class Mirror(BaseModel):
+    base_url: str = Field(pattern=r"^https?://[^\s/]+/?$", max_length=200)
+
+
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=200)
     password: str = Field(default="", max_length=500)
@@ -223,6 +227,7 @@ def create_app(settings=None, db=None, seerr=None):
         for data in rows:
             fields = {f.get("name"): f for f in data.get("fields", [])}
             state = status.get(data.get("id"), {})
+            mirrors = list(dict.fromkeys(data.get("indexerUrls") or []))
             result.append({
                 "indexer_id": data.get("id"),
                 "name": data.get("name"),
@@ -234,8 +239,38 @@ def create_app(settings=None, db=None, seerr=None):
                 "failing_since": state.get("initialFailure"),
                 "source": linked.get(data.get("id")),
                 "torznab_url": f"{base}/{data.get('id')}/api",
+                "base_url": fields.get("baseUrl", {}).get("value") or (mirrors[0] if mirrors else None),
+                "mirrors": mirrors,
             })
         return result
+
+    @app.put("/admin/indexers/{indexer_id}/mirror")
+    def set_indexer_mirror(indexer_id: int, payload: Mirror):
+        """Switch a Prowlarr indexer to another of its definition's known addresses."""
+        base, _, key = prowlarr_gateway()
+        with prowlarr_client(base, key, timeout=400) as client:
+            found = client.get(f"/indexer/{indexer_id}")
+            if found.status_code == 404:
+                raise HTTPException(404, "Indexer not found")
+            data = found.raise_for_status().json()
+            wanted = payload.base_url.rstrip("/") + "/"
+            if wanted not in (data.get("indexerUrls") or []):
+                raise HTTPException(400, "Prowlarr поддерживает только адреса из определения трекера")
+            for field in data["fields"]:
+                if field.get("name") == "baseUrl":
+                    field["value"] = wanted
+            try:
+                response = client.put(f"/indexer/{indexer_id}", json=data)
+            except httpx.TimeoutException:
+                raise HTTPException(504, "Зеркало не ответило на проверку за 400 секунд") from None
+        if response.status_code >= 400:
+            try:
+                messages = [e.get("errorMessage") for e in response.json() if isinstance(e, dict)]
+            except (ValueError, TypeError):
+                messages = []
+            detail = "; ".join(m for m in messages if m)[:300] or f"Prowlarr HTTP {response.status_code}"
+            raise HTTPException(400, detail)
+        return {"saved": True, "base_url": wanted}
 
     @app.put("/admin/indexers/{indexer_id}/credentials")
     def set_indexer_credentials(indexer_id: int, payload: Credentials):
