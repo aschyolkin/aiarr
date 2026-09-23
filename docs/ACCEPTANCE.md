@@ -1,6 +1,24 @@
 # Acceptance checkpoint — 2026-09-09
 
-## Текущий незавершённый пакет — 2026-09-23
+## Production deployment 9619050 — 2026-09-23
+
+Перед обновлением: конфигурация приложения и SQLite-бэкап (`PASS`, схема 0007,
+sha256 `3deb12bf…`) в `/mnt/data/apps/aiarr-pre-9619050-20260923-2244`, ZFS-снапшот
+`data/apps/aiarr-state@pre-9619050-20260923-2244`. Предварительная сверка:
+из шести заявок Seerr вернул `404` только для заявки 3 (job 2, без torrent и
+импортов). Образ `media-acquisition-engine:9619050`
+(`sha256:0aa8ed01…`, архив исходников sha256 `2640e88c…`) собран на TrueNAS,
+`app.update` сменил только теги образов. `midclt call` с полной
+compose-конфигурацией в argv отклоняется sudo-политикой TrueNAS (`argv mismatch`);
+обновление выполнено через Python-клиент middleware.
+
+После обновления: api `healthy`, migrate завершился с кодом 0, job 5 продолжил
+загрузку (28.5%), job 2 получил `SEERR_REQUEST_DELETED` → `SEERR_CLEANUP_DONE`
+без удаления файлов. `/admin` отдаёт страницу, `/admin/overview` без ключа и
+cookie Seerr — `401`. Вход через сессию Seerr в браузере и удаление реального
+импорта ещё не проверены вживую.
+
+## Пакет Seerr SSO/удаления — 2026-09-23 (история подготовки)
 
 Production-состояние описано ниже в записи про образ `aaeb441`: aiarr уже
 заменил Radarr/Sonarr, а `MAE_DRY_RUN=false`. Работа над следующим обновлением
