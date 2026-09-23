@@ -3,10 +3,12 @@
 Experimental build. Read ACCEPTANCE.md before any production switch.
 
 Latest verified checkpoint (2026-09-23): aiarr runs
-`media-acquisition-engine:unmonitor-20260923` with dry-run enabled. See the
-dated ACCEPTANCE update for the verified image ID, isolated live test and
-private rollback backup. Seerr has saved non-default aiarr services for movies/series
-with scans and automatic search disabled; legacy defaults are unchanged.
+`media-acquisition-engine:c6f2bb1` with dry-run enabled and NNM-Club plus
+BigFAN providers. See the dated ACCEPTANCE update for the verified image,
+production source check, request results and private rollback backup. Seerr
+has saved non-default aiarr services for movies/series with scans and automatic
+search disabled; legacy defaults are unchanged. Do not remove Radarr/Sonarr
+until a real acquisition and import passes.
 The historical deployment sections below predate this staged integration.
 
 Administrative login: `http://10.110.111.2:30280/admin`. Supply the existing

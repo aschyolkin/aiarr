@@ -1,5 +1,44 @@
 # Acceptance checkpoint — 2026-09-09
 
+## Production replacement preflight — 2026-09-23
+
+User authorized replacing and deleting Radarr/Sonarr. The cutover is not yet
+safe: the two current approved production works have no policy-proven release.
+Radarr and Sonarr remain running and remain Seerr's default services. No aiarr
+torrent was added, and `MAE_DRY_RUN` remains true.
+
+Before any app changes, TrueNAS ZFS snapshots were taken for Radarr, Sonarr,
+Seerr, app configuration, and aiarr state. Private app configuration and
+consistent SQLite backups (Radarr, Sonarr, Seerr, aiarr) are retained at
+`/mnt/data/apps/aiarr-cutover-20260923`; each SQLite backup passed
+`quick_check`, and the aiarr backup passed its manifest verification.
+
+Commit `c6f2bb1` parses numbered Russian audio and AVC/HEVC codec evidence from
+source cards, rejecting a title/card codec conflict. Offline: **213 passed**,
+Ruff clean. Source archive SHA-256:
+`dea06cf3e82979b96e66877382997cea399bbcd277e00210a26b318dd2d4217b`.
+The TrueNAS app update job 49284 succeeded. Both aiarr containers run
+`media-acquisition-engine:c6f2bb1`, image ID
+`sha256:4451c35ff7862cee3c6b440da94d83cb3f676cce69d2e6038ed8124149c230cf`.
+The API was healthy with `dry_run=true`; the Prowlarr BigFAN Torznab endpoint
+passed its live capability check from the worker container. Configured providers
+are now NNM-Club and BigFAN through Prowlarr.
+
+A real retry of the approved Silo request examined 78 candidates (50 NNM-Club,
+28 BigFAN), with no provider errors. The BigFAN card proved H.264 and Russian
+audio, but the only relevant release contains S03E01–E10 while the library
+already has S03E01–E09; the policy correctly returned `EPISODE_MISMATCH`.
+S04E01 is also requested but not available in these source results. The approved
+Spider-Man: Brand New Day retry examined three NNM-Club candidates and found
+no proven release. Both jobs returned to `WAITING_FOR_RELEASE` with
+`NO_PROVEN_CANDIDATE`. qBittorrent had one existing torrent and zero in the
+aiarr category; all inventoried apps remained `RUNNING`.
+
+Production cutover still needs a released, policy-proven acquisition and import,
+plus a safe way to acquire only missing episodes from a season pack (or a
+verified standalone S03E10 release). Keep the legacy services until that live
+flow succeeds and Seerr defaults are switched deliberately.
+
 ## Episode unmonitoring — 2026-09-23
 
 Offline: **211 passed**, Ruff clean. Removing an episode from a series request
