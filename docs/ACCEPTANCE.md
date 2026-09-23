@@ -1,5 +1,32 @@
 # Acceptance checkpoint — 2026-09-09
 
+## NNM-Club search repair and live Toy Story 5 request — 2026-09-23
+
+Seerr-approved job 3 (*История игрушек 5 / Toy Story 5*) reached `FAILED` after
+five `PROVIDER_SEARCH_FAILED` retries. Its decision contained no candidates and
+one NNM-Club `PARSER_BROKEN` search error. Live NNM-Club search HTML was otherwise
+valid but contained nine undefined Windows-1251 bytes (`0x98`) in about 102 KiB.
+The decoder now replaces only this undefined byte, with a bound of 32 per page;
+all other decoding errors still fail. A read-only live replay found nine valid
+search rows and read the first release card. Local validation: 239 tests passed,
+Ruff clean.
+
+Before deployment, private app configuration and a `quick_check`-verified aiarr
+SQLite backup were saved at `/mnt/data/apps/aiarr-nnm-search-20260923`, and ZFS
+snapshot `data/apps/aiarr-state@pre-nnm-search-fix-20260923` was taken.
+TrueNAS image update job 50001 succeeded with
+`media-acquisition-engine:aaeb441` (image ID
+`sha256:115f16ce3db8f52c5e7d1f88a40f2a37af1818f35c2a45d73cd907fe973a914e`).
+Source archive SHA-256:
+`dfb904389c26929750e3bc2d3171228f3b2458f56dc353d7e788dec12bc5bd2a`.
+
+The affected job was retried through the authenticated admin API. The deployed
+worker examined nine NNM-Club candidates; four met all release-selection rules,
+with no provider errors. It selected the 2026 WEB-DL H.265/2160p release and
+added exactly one MKV file to qBittorrent. The job reached `DOWNLOADING` at
+1.36% progress during this checkpoint. Import and Jellyfin availability remain
+pending the actual transfer and media verification.
+
 ## Seerr repair and live web administration — 2026-09-23
 
 Seerr's request list calls `getProfiles()` on **every** configured Radarr and

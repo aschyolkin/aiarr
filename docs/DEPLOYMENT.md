@@ -3,7 +3,7 @@
 Read ACCEPTANCE.md for the production acceptance record and rollback data.
 
 Latest verified checkpoint (2026-09-23): aiarr runs
-`media-acquisition-engine:dd5b275` with `MAE_DRY_RUN=false` and NNM-Club plus
+`media-acquisition-engine:aaeb441` with `MAE_DRY_RUN=false` and NNM-Club plus
 BigFAN providers. Seerr defaults route movies and series to aiarr. A real
 Silo S03E10 was downloaded selectively, hardlinked into the existing series
 folder, and recognized by Jellyfin. Radarr and Sonarr apps were deleted after
@@ -12,6 +12,8 @@ does not warn about missing services. The web UI now shows order progress and
 edits operational settings. Private backups and ZFS snapshots remain
 available; see the 2026-09-23 sections in ACCEPTANCE.md. The historical
 deployment sections below describe earlier staged states.
+Toy Story 5 job 3 is downloading after the NNM-Club encoding repair; its
+availability has not yet been confirmed by Jellyfin.
 
 Administrative login: `http://10.110.111.2:30280/admin`. Supply the existing
 aiarr API key in the password field, never in a bookmark or shared URL. The
