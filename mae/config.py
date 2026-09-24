@@ -125,6 +125,9 @@ class Settings(BaseSettings):
     max_downloads: int = Field(default=2, ge=1, le=10)
     stall_seconds: int = Field(default=180, ge=60, le=86400)
     backup_download_limit: int = Field(default=100 * 1024, ge=1024)
+    min_seeders: int = Field(default=2, ge=0, le=1000)
+    min_download_speed: int = Field(default=125_000, ge=0)  # bytes/s, 1 Mbit/s
+    max_eta_seconds: int = Field(default=3 * 3600, ge=600)
 
     @model_validator(mode="after")
     def validate_names(self):

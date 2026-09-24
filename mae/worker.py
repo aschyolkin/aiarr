@@ -281,9 +281,11 @@ class Worker:
         self.db.transition(job["id"], "SEARCHING")
         selected = None
         decisions, errors = [], []
-        stalled = {(row["provider"], row["release_id"]) for row in self.db.execute(
-            "SELECT provider,release_id FROM stalled_releases WHERE job_id=:id", id=job["id"]
+        tried = {(row["provider"], row["release_id"]): row["slow"] for row in self.db.execute(
+            "SELECT provider,release_id,slow FROM stalled_releases WHERE job_id=:id", id=job["id"]
         )}
+        stalled = {key for key, slow in tried.items() if not slow}
+        slow_keys = {key for key, slow in tried.items() if slow}
         skipped_stalled = False
         eligible = []
         published = 0.0
@@ -354,7 +356,7 @@ class Worker:
             if skipped_stalled:
                 # Every usable release had no peers; seeders may return, so the
                 # next hourly search tries them again.
-                self.db.execute("DELETE FROM stalled_releases WHERE job_id=:id", id=job["id"])
+                self.db.execute("DELETE FROM stalled_releases WHERE job_id=:id AND slow=0", id=job["id"])
             # Unknown properties of already rejected releases cannot turn a
             # wrong movie/season or forbidden source into a review candidate.
             state = (
@@ -377,7 +379,8 @@ class Worker:
                 state = "AUTH_REQUIRED"
             self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
             return
-        _, candidate, provider = selected
+        ranked = sorted(eligible, key=lambda item: self.download_preference(item, slow_keys), reverse=True)
+        _, candidate, provider = ranked[0]
         if work.kind == "series":
             candidate.parsed["download_episodes"] = work.episodes
         self.db.transition(job["id"], "SELECTED", candidate=candidate.model_dump_json())
@@ -404,9 +407,20 @@ class Worker:
             job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size, download_started=time.time()
         )
         self.start_torrent(torrent_hash, raw, work)
-        backups = [item for item in sorted(eligible, key=lambda item: -item[0]) if item[1] is not candidate]
-        if backups:
-            self.start_backup(job, work, backups[0], torrent_hash, committed)
+        if len(ranked) > 1:
+            self.start_backup(job, work, ranked[1], torrent_hash, committed)
+
+    def download_preference(self, item, slow_keys=frozenset()):
+        """Enough seeders first (unknown in between), then policy score, then seeders.
+
+        Releases already found too slow are only a last resort.
+        """
+        rank, candidate, _ = item
+        seeders = candidate.release.seeders
+        tier = 1 if seeders is None else 2 if seeders >= self.settings.min_seeders else 0
+        if (candidate.release.provider, candidate.release.release_id) in slow_keys:
+            tier = -1
+        return tier, rank, seeders or 0
 
     def prepare_torrent(self, provider, candidate, work):
         handle = provider.resolve_download(candidate.release)
@@ -496,15 +510,15 @@ class Worker:
             hash=torrent_hash, id=job_id,
         ))
 
-    def queue_discard(self, job_id, torrent_hash, stalled_candidate=None):
+    def queue_discard(self, job_id, torrent_hash, stalled_candidate=None, slow=False):
         if stalled_candidate is not None:
             release = json.loads(stalled_candidate or "{}").get("release") or {}
             if release.get("provider") and release.get("release_id"):
                 self.db.execute(
-                    "INSERT OR IGNORE INTO stalled_releases(job_id,provider,release_id,torrent_hash,created) "
-                    "VALUES(:id,:provider,:release,:hash,:now)",
+                    "INSERT OR REPLACE INTO stalled_releases(job_id,provider,release_id,torrent_hash,created,slow) "
+                    "VALUES(:id,:provider,:release,:hash,:now,:slow)",
                     id=job_id, provider=release["provider"], release=release["release_id"],
-                    hash=torrent_hash, now=time.time(),
+                    hash=torrent_hash, now=time.time(), slow=int(slow),
                 )
         self.db.execute(
             "INSERT OR IGNORE INTO discard_downloads(job_id,torrent_hash) VALUES(:id,:hash)",
@@ -550,43 +564,102 @@ class Worker:
                 log.warning(json.dumps({"event": "download_discard_failed", "job": row["job_id"],
                                         "type": type(exc).__name__}))
 
+    @staticmethod
+    def seeds(info):
+        return max(int(info.get("num_seeds") or 0), int(info.get("num_complete") or 0))
+
+    def healthy(self, info, elapsed):
+        return (
+            self.seeds(info) >= self.settings.min_seeders
+            and int(info.get("downloaded") or 0) / elapsed >= self.settings.min_download_speed
+        )
+
+    def alternatives(self, job):
+        """Acceptable releases from the last search that were not tried yet."""
+        skip = {(row["provider"], row["release_id"]) for row in self.db.execute(
+            "SELECT provider,release_id FROM stalled_releases WHERE job_id=:id", id=job["id"]
+        )}
+        for raw in (job["candidate"], job["backup_candidate"]):
+            release = json.loads(raw or "{}").get("release") or {}
+            skip.add((release.get("provider"), release.get("release_id")))
+        return any(
+            not c.get("reasons") and not c.get("unknown")
+            and ((c.get("release") or {}).get("provider"), (c.get("release") or {}).get("release_id")) not in skip
+            for c in json.loads(job["decision"] or "{}").get("candidates", [])
+        )
+
+    def switch_release(self, job, reason, primary_moving=False, backup_moving=False):
+        self.queue_discard(job["id"], job["torrent_hash"], job["candidate"], slow=primary_moving)
+        if job["backup_hash"]:
+            self.queue_discard(job["id"], job["backup_hash"], job["backup_candidate"], slow=backup_moving)
+        self.db.transition(
+            job["id"], "RETRY_SCHEDULED", reason,
+            torrent_hash=None, candidate=None, reserved=0, backup_hash=None, backup_candidate=None,
+            backup_reserved=0,
+        )
+
     def decide_race(self, job, info):
-        """After stall_seconds keep whichever torrent receives data; True if the job changed."""
+        """Keep a torrent only while it downloads fast enough; True if the job changed."""
         if (
             info.get("state") not in {"metaDL", "forcedMetaDL", "stalledDL", "downloading", "forcedDL"}
             or not info.get("added_on")
-            or time.time() - max(float(info["added_on"]), job["download_started"] or 0) < self.settings.stall_seconds
         ):
             return False
-        if int(info.get("downloaded") or 0):
-            if job["backup_hash"]:
-                self.queue_discard(job["id"], job["backup_hash"])
-                self.db.transition(
-                    job["id"], "DOWNLOADING", backup_hash=None, backup_candidate=None, backup_reserved=0, delay=30
-                )
-                self.discard_downloads()
-                return True
+        elapsed = time.time() - max(float(info["added_on"]), job["download_started"] or 0)
+        if elapsed < self.settings.stall_seconds:
             return False
-        backup = self.downloader.info(job["backup_hash"]) if job["backup_hash"] else None
-        if backup and int(backup.get("downloaded") or 0):
+        changed = self.finish_race(job, info, elapsed) if job["backup_hash"] else self.check_slow(job, info, elapsed)
+        if changed:
+            self.discard_downloads()
+        return changed
+
+    def finish_race(self, job, info, elapsed):
+        if self.healthy(info, elapsed):
+            self.queue_discard(job["id"], job["backup_hash"])
+            self.db.transition(
+                job["id"], "DOWNLOADING", backup_hash=None, backup_candidate=None, backup_reserved=0, delay=30
+            )
+            return True
+        moving = int(info.get("downloaded") or 0) > 0
+        backup = self.downloader.info(job["backup_hash"])
+        backup_moving = bool(backup and int(backup.get("downloaded") or 0))
+        # The backup is speed-limited, so its seeders, not its speed, show its promise.
+        if backup_moving and (not moving or self.seeds(backup) > self.seeds(info)):
             self.downloader.set_download_limit(job["backup_hash"], -1)
-            self.queue_discard(job["id"], job["torrent_hash"], job["candidate"])
+            self.queue_discard(job["id"], job["torrent_hash"], job["candidate"], slow=moving)
             self.db.transition(
                 job["id"], "DOWNLOADING", "BACKUP_PROMOTED", delay=30,
                 torrent_hash=job["backup_hash"], candidate=job["backup_candidate"],
                 reserved=int(backup.get("size") or job["reserved"] or 0),
                 backup_hash=None, backup_candidate=None, backup_reserved=0,
+                download_started=time.time(),
+            )
+        elif (moving or backup_moving) and not self.alternatives(job):
+            # A slow download beats none when nothing else is left to try.
+            self.queue_discard(job["id"], job["backup_hash"], job["backup_candidate"], slow=backup_moving)
+            self.db.transition(
+                job["id"], "DOWNLOADING", "DOWNLOAD_SLOW_NO_ALTERNATIVE", delay=30,
+                backup_hash=None, backup_candidate=None, backup_reserved=0,
             )
         else:
-            self.queue_discard(job["id"], job["torrent_hash"], job["candidate"])
-            if job["backup_hash"]:
-                self.queue_discard(job["id"], job["backup_hash"], job["backup_candidate"])
-            self.db.transition(
-                job["id"], "RETRY_SCHEDULED", "DOWNLOAD_STALLED_NO_PEERS",
-                torrent_hash=None, candidate=None, reserved=0, backup_hash=None, backup_candidate=None,
-                backup_reserved=0,
+            self.switch_release(
+                job, "DOWNLOAD_TOO_SLOW" if moving or backup_moving else "DOWNLOAD_STALLED_NO_PEERS",
+                primary_moving=moving, backup_moving=backup_moving,
             )
-        self.discard_downloads()
+        return True
+
+    def check_slow(self, job, info, elapsed):
+        """Replace a download that would take longer than max_eta_seconds."""
+        if elapsed < 2 * self.settings.stall_seconds or float(info.get("progress") or 0) >= 0.5:
+            return False
+        average = int(info.get("downloaded") or 0) / elapsed
+        left = int(info.get("amount_left") or 0)
+        eta_average = left / average if average else float("inf")
+        eta_now = int(info.get("eta") or 0)
+        # Both the current and the average rate must be too slow, to ignore short dips.
+        if min(eta_average, eta_now) <= self.settings.max_eta_seconds or not self.alternatives(job):
+            return False
+        self.switch_release(job, "DOWNLOAD_TOO_SLOW", primary_moving=True)
         return True
 
     def monitor(self, job, work):

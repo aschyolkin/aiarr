@@ -183,7 +183,11 @@ def _racing(db, movie, primary="first", backup="second"):
 
 def _torrent(**overrides):
     return {"category": "mae", "tags": "media-acquisition-engine", "progress": 0, "downloaded": 0,
-            "state": "stalledDL", "added_on": time.time() - 181, "size": 1000, **overrides}
+            "state": "stalledDL", "added_on": time.time() - 181, "size": 1000, "num_seeds": 5, "num_complete": 5,
+            "amount_left": 1000, "eta": 60, **overrides}
+
+
+FAST = 10**8
 
 
 def _downloader(torrents):
@@ -208,7 +212,7 @@ def test_best_two_candidates_start_together_with_slow_backup(settings, db, movie
 
 def test_backup_is_dropped_when_primary_downloads(settings, db, movie):
     job_id = _racing(db, movie)
-    downloader = _downloader({_h("first"): _torrent(downloaded=1), _h("second"): _torrent()})
+    downloader = _downloader({_h("first"): _torrent(downloaded=FAST), _h("second"): _torrent()})
 
     Worker(settings, db, [], downloader).tick()
 
@@ -289,7 +293,7 @@ def test_backup_of_a_cancelled_job_is_removed(settings, db, movie):
 
 def test_failed_discard_is_retried_next_tick(settings, db, movie):
     job_id = _racing(db, movie)
-    downloader = _downloader({_h("first"): _torrent(downloaded=1), _h("second"): _torrent()})
+    downloader = _downloader({_h("first"): _torrent(downloaded=FAST), _h("second"): _torrent()})
     downloader.delete_owned.side_effect = [ProviderError(Outcome.TEMPORARY_FAILURE), True]
     worker = Worker(settings, db, [], downloader)
 
@@ -304,7 +308,7 @@ def test_failed_discard_is_retried_next_tick(settings, db, movie):
 def test_all_stalled_candidates_wait_and_are_retried_later(settings, db, movie):
     job_id = db.submit(movie)
     for rid in ("first", "second"):
-        db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture',:rid,NULL,0)", id=job_id, rid=rid)
+        db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture',:rid,NULL,0,0)", id=job_id, rid=rid)
 
     Worker(settings, db, [_provider("first", "second")], Mock()).tick()
 
@@ -335,8 +339,8 @@ def test_backup_start_failure_keeps_primary_downloading(settings, db, movie, mon
 def test_interrupted_promotion_intent_does_not_delete_current_torrent(settings, db, movie):
     job_id = _racing(db, movie)
     db.execute("INSERT INTO discard_downloads VALUES(:id,:hash)", id=job_id, hash=_h("first"))
-    db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture','first',:hash,0)", id=job_id, hash=_h("first"))
-    downloader = _downloader({_h("first"): _torrent(downloaded=1), _h("second"): _torrent()})
+    db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture','first',:hash,0,0)", id=job_id, hash=_h("first"))
+    downloader = _downloader({_h("first"): _torrent(downloaded=FAST), _h("second"): _torrent()})
 
     Worker(settings, db, [], downloader).tick()
 
@@ -415,3 +419,100 @@ def test_search_progress_is_visible_before_search_finishes(settings, db, movie):
 
     assert seen[1] == (True, ["first"])
     assert "partial" not in json.loads(db.job(job_id)["decision"])
+
+
+
+def _decision(*release_ids):
+    return json.dumps({"candidates": [
+        {"release": {"provider": "fixture", "release_id": rid}, "reasons": [], "unknown": []}
+        for rid in release_ids
+    ]})
+
+
+def test_releases_with_enough_seeders_are_preferred(settings, db, movie):
+    provider = _provider("few", "many")
+    provider.search.return_value[0].seeders = 1
+    provider.search.return_value[1].seeders = 10
+    job_id = db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    assert json.loads(db.job(job_id)["candidate"])["release"]["release_id"] == "many"
+
+
+def test_slow_primary_loses_to_backup_with_more_seeders(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(downloaded=1000, num_seeds=1, num_complete=1),
+                              _h("second"): _torrent(downloaded=1, num_seeds=9)})
+    Worker(settings, db, [], downloader).tick()
+    assert (db.job(job_id)["reason"], db.job(job_id)["torrent_hash"]) == ("BACKUP_PROMOTED", _h("second"))
+
+
+def test_both_slow_switch_when_alternatives_exist(settings, db, movie):
+    job_id = _racing(db, movie)
+    db.execute("UPDATE jobs SET decision=:d WHERE id=:id", d=_decision("first", "second", "third"), id=job_id)
+    downloader = _downloader({_h("first"): _torrent(downloaded=1000), _h("second"): _torrent(num_seeds=0,
+                                                                                          num_complete=0)})
+    Worker(settings, db, [], downloader).tick()
+    assert (db.job(job_id)["state"], db.job(job_id)["reason"]) == ("RETRY_SCHEDULED", "DOWNLOAD_TOO_SLOW")
+
+
+def test_slow_primary_is_kept_when_nothing_else_is_left(settings, db, movie):
+    job_id = _racing(db, movie)
+    db.execute("UPDATE jobs SET decision=:d WHERE id=:id", d=_decision("first", "second"), id=job_id)
+    downloader = _downloader({_h("first"): _torrent(downloaded=1000), _h("second"): _torrent(num_seeds=0,
+                                                                                          num_complete=0)})
+    Worker(settings, db, [], downloader).tick()
+    job = db.job(job_id)
+    assert (job["reason"], job["torrent_hash"], job["backup_hash"]) == (
+        "DOWNLOAD_SLOW_NO_ALTERNATIVE", _h("first"), None)
+
+
+def _single(db, movie, decision):
+    job_id = db.submit(movie)
+    db.transition(job_id, "DOWNLOADING", torrent_hash=_h("first"), decision=decision,
+                  candidate=json.dumps({"release": {"provider": "fixture", "release_id": "first"}}))
+    return job_id
+
+
+def test_download_over_eta_limit_is_replaced(settings, db, movie):
+    job_id = _single(db, movie, _decision("first", "second"))
+    slow = _torrent(added_on=time.time() - 3600, downloaded=10**6, amount_left=10**11, eta=10**6, progress=0.01)
+    Worker(settings, db, [], _downloader({_h("first"): slow})).tick()
+    assert db.job(job_id)["reason"] == "DOWNLOAD_TOO_SLOW"
+
+
+def test_eta_check_keeps_download_in_several_cases(settings, db, movie):
+    slow = dict(added_on=time.time() - 3600, downloaded=10**6, amount_left=10**11, eta=10**6, progress=0.01)
+    cases = [
+        (_decision("first"), slow),                                  # nothing else to try
+        (_decision("first", "second"), {**slow, "eta": 600}),        # current rate is fine
+        (_decision("first", "second"), {**slow, "progress": 0.6}),   # more than half done
+        (_decision("first", "second"), {**slow, "added_on": time.time() - 200}),  # too early
+    ]
+    for decision, torrent in cases:
+        job_id = _single(db, movie, decision)
+        Worker(settings, db, [], _downloader({_h("first"): _torrent(**torrent)})).tick()
+        assert db.job(job_id)["state"] == "DOWNLOADING", torrent
+        for table in ("job_downloads", "events", "jobs"):
+            db.execute(f"DELETE FROM {table}")
+
+
+
+def test_moving_backup_with_one_seed_replaces_dead_primary(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(), _h("second"): _torrent(downloaded=1, num_seeds=1,
+                                                                             num_complete=1)})
+    Worker(settings, db, [], downloader).tick()
+    assert (db.job(job_id)["reason"], db.job(job_id)["torrent_hash"]) == ("BACKUP_PROMOTED", _h("second"))
+
+
+def test_slow_releases_are_last_resort_and_never_forgotten(settings, db, movie):
+    job_id = db.submit(movie)
+    db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture','first',NULL,0,1)", id=job_id)
+    db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture','second',NULL,0,0)", id=job_id)
+
+    Worker(settings, db, [_provider("first", "second")], Mock()).tick()
+
+    job = db.job(job_id)
+    assert json.loads(job["candidate"])["release"]["release_id"] == "first"
+    rows = db.execute("SELECT release_id,slow FROM stalled_releases WHERE job_id=:id", id=job_id)
+    assert [(r["release_id"], r["slow"]) for r in rows] == [("first", 1), ("second", 0)]
