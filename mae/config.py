@@ -77,6 +77,7 @@ class Policy(BaseModel):
     version: str = "base-1"
     russian_required: bool = True
     max_bytes: int = Field(default=60 * 1024**3, gt=0)
+    max_file_bytes: int = Field(default=20 * 1024**3, gt=0)
     resolutions: list[int] = [2160, 1080]
     codecs: list[str] = ["H.265", "H.264"]
     source_weights: dict[str, int] = {"Web": 40, "Blu-ray": 40}

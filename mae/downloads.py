@@ -21,7 +21,7 @@ def safe_relative(value):
     return path
 
 
-def torrent_metadata(raw):
+def torrent_metadata(raw, with_sizes=False):
     if len(raw) > 2_000_000:
         raise ValueError("TORRENT_TOO_LARGE")
     try:
@@ -43,7 +43,7 @@ def torrent_metadata(raw):
             if not isinstance(length, int) or length < 0:
                 raise ValueError("INVALID_SIZE")
             total += length
-            names.append(name)
+            names.append((name, length) if with_sizes else name)
         # Canonical bencoding is required so computed hash is the original infohash.
         if bencodepy.encode(data) != raw:
             raise ValueError("NONCANONICAL_TORRENT")
@@ -190,7 +190,7 @@ class Downloader:
         self.resume(torrent_hash)
         self.client.torrents_remove_tags(tags=self.selection_tag, torrent_hashes=torrent_hash)
 
-    def magnet_preflight(self, url, kind, timeout=30):
+    def magnet_preflight(self, url, kind, timeout=30, with_sizes=False):
         """Obtain magnet metadata without allowing payload download to start."""
         torrent_hash = magnet_infohash(url)
         info = self.info(torrent_hash)
@@ -218,7 +218,9 @@ class Downloader:
                 if files:
                     size = info.get("size") or info.get("total_size")
                     if isinstance(size, int) and size >= 0:
-                        return torrent_hash, size, [row["name"] for row in files]
+                        return torrent_hash, size, [
+                            (row["name"], row.get("size")) if with_sizes else row["name"] for row in files
+                        ]
             time.sleep(0.5)
         raise ValueError("MAGNET_METADATA_UNAVAILABLE")
 

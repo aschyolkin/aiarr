@@ -39,6 +39,9 @@ def evaluate(candidate, work, policy):
         c.unknown.append("size")
     elif c.release.size > policy.max_bytes:
         c.reasons.append("TOO_LARGE")
+    elif work.kind == "movie" and c.release.size > policy.max_file_bytes:
+        # A movie release is essentially its one video file.
+        c.reasons.append("FILE_TOO_LARGE")
     if policy.russian_required and not any(
         cl.field == "audio_language" and cl.value == "rus" for cl in c.claims
     ):

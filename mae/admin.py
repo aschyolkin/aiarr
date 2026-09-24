@@ -85,6 +85,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <fieldset><legend>Качество</legend><div class="grid">
 <label class="field">Название профиля<input id="policy-version" required></label>
 <label class="field">Максимальный размер, ГиБ<input id="policy-size" type="number" min="1" step="1" required></label>
+<label class="field">Максимальный размер файла, ГиБ<input id="policy-file-size" type="number" min="1" step="1" required></label>
 <label class="field">Разрешения<select id="policy-resolution" multiple size="2"><option value="2160">2160p</option><option value="1080">1080p</option></select></label>
 <label class="field">Видеокодеки<select id="policy-codecs" multiple size="2"><option value="H.265">H.265</option><option value="H.264">H.264</option></select></label>
 <label class="field"><span>Русская аудиодорожка обязательна</span><input id="policy-russian" type="checkbox"></label>
@@ -177,6 +178,7 @@ function addProvider(value={}){
 function renderConfig(){
  const s=config.settings,p=s.policy;
  byId('policy-version').value=p.version;byId('policy-size').value=Math.round(p.max_bytes/1073741824);
+ byId('policy-file-size').value=Math.round(p.max_file_bytes/1073741824);
  for(const option of byId('policy-resolution').options)option.selected=p.resolutions.includes(Number(option.value));
  for(const option of byId('policy-codecs').options)option.selected=p.codecs.includes(option.value);
  byId('policy-russian').checked=p.russian_required;
@@ -200,6 +202,7 @@ function collectConfig(){
  const selectedValues=id=>[...byId(id).selectedOptions].map(option=>option.value);
  const policy={...previous.policy,version:byId('policy-version').value.trim(),
   max_bytes:Number(byId('policy-size').value)*1073741824,
+  max_file_bytes:Number(byId('policy-file-size').value)*1073741824,
   resolutions:selectedValues('policy-resolution').map(Number),codecs:selectedValues('policy-codecs'),
   russian_required:byId('policy-russian').checked,
   source_weights:JSON.parse(byId('policy-sources').value),
@@ -245,7 +248,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
  LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
  NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
-const candidateReasons={IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась, нет сидов',YEAR_UNVERIFIED:'год не совпадает или не указан',
+const candidateReasons={FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась, нет сидов',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
  SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
  CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',
@@ -257,7 +260,7 @@ const CHECKS=['IDENTITY_MISMATCH','YEAR_OR_SEASON','SOURCE_NOT_ALLOWED','RESOLUT
 function candidatePercent(c){
  const bad=new Set([...(c.reasons||[]),...(c.unknown||[])]);
  if(bad.has('YEAR_UNVERIFIED')||bad.has('SEASON_MISMATCH')||bad.has('EPISODE_MISMATCH')||bad.has('NOT_A_MOVIE'))bad.add('YEAR_OR_SEASON');
- if(bad.has('TOO_LARGE'))bad.add('size');if(bad.has('CODEC_EVIDENCE_CONFLICT'))bad.add('compatible_video_codec');
+ if(bad.has('TOO_LARGE')||bad.has('FILE_TOO_LARGE'))bad.add('size');if(bad.has('CODEC_EVIDENCE_CONFLICT'))bad.add('compatible_video_codec');
  return Math.round(100*CHECKS.filter(x=>!bad.has(x)).length/CHECKS.length);
 }
 const sizeText=b=>typeof b==='number'?(b/1073741824).toFixed(b>=10737418240?0:1)+' ГиБ':'—';

@@ -20,7 +20,7 @@ class MagnetProvider:
 def test_magnet_path_is_checked_before_resume(settings, db, movie, monkeypatch):
     provider = MagnetProvider()
     downloader = Mock()
-    downloader.magnet_preflight.return_value = ("a" * 40, 1, ["../escape.mkv"])
+    downloader.magnet_preflight.return_value = ("a" * 40, 1, [("../escape.mkv", 1)])
     monkeypatch.setattr("mae.worker.evaluate", lambda candidate, *args: candidate)
     monkeypatch.setattr("mae.worker.Jellyfin", lambda _settings: Mock(coverage=Mock(return_value=set())))
     job_id = db.submit(movie, False)

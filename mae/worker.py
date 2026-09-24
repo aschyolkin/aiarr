@@ -400,7 +400,7 @@ class Worker:
         handle = provider.resolve_download(candidate.release)
         url = handle.url.get_secret_value()
         if url.startswith("magnet:"):
-            torrent_hash, size, files = self.downloader.magnet_preflight(url, work.kind)
+            torrent_hash, size, files = self.downloader.magnet_preflight(url, work.kind, with_sizes=True)
             raw = None
         else:
             raw = provider.http.get(
@@ -408,10 +408,16 @@ class Worker:
                 allowed_redirect=("bulk.nnmclub.to", "/download.php")
                 if provider.config.protocol == "nnmclub" else None,
             )
-            torrent_hash, size, files = torrent_metadata(raw)
+            torrent_hash, size, files = torrent_metadata(raw, with_sizes=True)
         # qBittorrent metadata is still untrusted provider input. Validate every
         # path before a metadata-preflighted magnet can be resumed.
-        files = [str(safe_relative(file)) for file in files]
+        videos = {".mkv", ".mp4", ".m4v", ".avi", ".ts"}
+        if any(
+            Path(name).suffix.lower() in videos and (length or 0) > self.settings.policy.max_file_bytes
+            for name, length in files
+        ):
+            raise ValueError("FILE_SIZE_EXCEEDS_POLICY")
+        files = [str(safe_relative(name)) for name, _ in files]
         if work.kind == "series":
             keys = set()
             for name in files:

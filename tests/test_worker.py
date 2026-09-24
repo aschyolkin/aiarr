@@ -163,7 +163,7 @@ def _provider(*release_ids):
 def _live(settings, monkeypatch):
     monkeypatch.setattr("mae.worker.Jellyfin.coverage", lambda _self, _work: set())
     monkeypatch.setattr("mae.worker.shutil.disk_usage", lambda _path: Mock(free=10**15))
-    monkeypatch.setattr("mae.worker.torrent_metadata", lambda raw: (raw.decode().ljust(40, "0"), 1000, ["a.mkv"]))
+    monkeypatch.setattr("mae.worker.torrent_metadata", lambda raw, **_: (raw.decode().ljust(40, "0"), 1000, [("a.mkv", 1000)]))
     return settings.model_copy(update={"dry_run": False})
 
 
@@ -361,3 +361,39 @@ def test_backup_size_counts_against_free_space(settings, db, movie, monkeypatch)
     job_id = db.submit(movie, False)
     Worker(settings, db, [_provider("first")], _downloader({_h("first"): _torrent(downloaded=1)})).tick()
     assert db.job(job_id)["reason"] == "INSUFFICIENT_SPACE"
+
+
+def test_movie_release_over_file_limit_is_rejected(settings, db, movie):
+    provider = _provider("big", "ok")
+    provider.search.return_value[0].size = settings.policy.max_file_bytes + 1
+    job_id = db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    job = db.job(job_id)
+    assert json.loads(job["candidate"])["release"]["release_id"] == "ok"
+    reasons = {c["release"]["release_id"]: c["reasons"] for c in json.loads(job["decision"])["candidates"]}
+    assert reasons["big"] == ["FILE_TOO_LARGE"]
+
+
+def test_torrent_with_oversized_video_file_is_not_started(settings, db, monkeypatch):
+    settings = _live(settings, monkeypatch)
+    limit = settings.policy.max_file_bytes
+    monkeypatch.setattr("mae.worker.torrent_metadata", lambda raw, **_: (
+        raw.decode().ljust(40, "0"), limit + 2, [("S01E01.mkv", limit + 1), ("S01E02.mkv", 1)]))
+    job_id = db.submit(Work(kind="series", external_id=9, title="Example", seasons=[1],
+                            episodes=["S01E01", "S01E02"]), False)
+    provider = _provider("pack")
+    provider.search.return_value[0].title = "Example.S01.1080p.WEB-DL.H.264"
+    downloader = Mock()
+    Worker(settings, db, [provider], downloader).tick()
+    assert db.job(job_id)["reason"] == "FILE_SIZE_EXCEEDS_POLICY"
+    downloader.add.assert_not_called()
+
+
+def test_torrent_metadata_reports_file_sizes():
+    import bencodepy
+
+    from mae.downloads import torrent_metadata
+    raw = bencodepy.encode({b"info": {b"name": b"Movie.mkv", b"length": 5, b"piece length": 16384,
+                                      b"pieces": b"0" * 20}})
+    assert torrent_metadata(raw, with_sizes=True)[2] == [("Movie.mkv", 5)]
+    assert torrent_metadata(raw)[2] == ["Movie.mkv"]
