@@ -21,6 +21,17 @@ Rutor, а посторонний DLE-сайт с играми (нет magnet, п
 kinozal.me, kinozal.guru). Образ `aca38c1`: после «Проверить и сохранить» у логина трекера рисуется
 ✅ или ❌ с текстом ошибки Prowlarr; таймаут проверки 400 с.
 
+## Production deployment e71258b — 2026-09-24
+
+Схемы 0008 (все хэши торрентов заявки для очистки при удалении в Seerr) и 0009
+(гонка основного и запасного торрента, `stalled_releases`, очередь
+`discard_downloads`), лимит 20 ГиБ на видеофайл. Перед обновлением: SQLite-бэкап
+`/mnt/data/apps/aiarr-pre-e71258b-20260924/sqlite` (PASS, schema 0007), снапшот
+`data/apps/aiarr-state@pre-e71258b-20260924`. `app.update` сменил только теги
+образов api/worker/migrate; migrate `Exited (0)`, схема 0009, api `healthy`.
+qBittorrent: `max_active_downloads` 3→6, `max_active_torrents` 5→10. Живая
+проверка гонки ещё не выполнена (в момент выкатки активных загрузок не было).
+
 ## Production deployment 83881b1 — 2026-09-24
 
 Отдельные страницы «Заявки / Источники / Настройки» (навигация справа

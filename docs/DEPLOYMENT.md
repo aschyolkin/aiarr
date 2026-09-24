@@ -1,6 +1,6 @@
 # Deployment and rollback
 
-Pending local fix (2026-09-24): schema 0008 retains every job's torrent hash
+Deployed in e71258b (2026-09-24): schema 0008 retains every job's torrent hash
 after partial-season import clears its active download. Confirmed Seerr deletion
 cleans all recorded torrents; legacy hashes are recovered from exact imported
 source paths in owned qBittorrent torrents and saved before deleting imports.
@@ -15,7 +15,7 @@ usable release has stalled the list is cleared and retried an hour later.
 qBittorrent queue limits raised on 2026-09-24 for two torrents per job:
 `max_active_downloads` 3→6, `max_active_torrents` 5→10.
 Back up SQLite before upgrading and run migrations before starting API/worker.
-These changes have not yet been deployed.
+
 
 Read ACCEPTANCE.md for the production acceptance record and rollback data.
 
