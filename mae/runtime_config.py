@@ -17,6 +17,7 @@ EDITABLE = frozenset({
     "deepseek_key", "deepseek_model", "deepseek_daily_calls",
     "deepseek_daily_tokens", "deepseek_request_calls", "deepseek_request_tokens",
     "max_attempts", "enrichment_limit", "reserve_bytes", "max_downloads",
+    "stall_seconds", "backup_download_limit",
 })
 SECRETS = frozenset({"qbit_password", "jellyfin_key", "seerr_key", "tmdb_key", "deepseek_key"})
 PROVIDER_SECRETS = frozenset({"api_key", "cookie"})

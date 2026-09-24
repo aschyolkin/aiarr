@@ -45,6 +45,8 @@ def published(db, settings, store, movie):
 
 
 def worker(settings, store, db, downloader):
+    if isinstance(downloader.hashes_for_sources.return_value, Mock):
+        downloader.hashes_for_sources.return_value = set()
     current = settings.model_copy(update={"store": store, "dry_run": False})
     return Worker(current, db, [], downloader)
 
@@ -132,6 +134,64 @@ def owned_downloader(row, files=({"name": "Example/movie.mkv"},)):
 
 
 BASE = {"category": "mae", "tags": "media-acquisition-engine", "save_path": "/data/store/downloads/films"}
+
+
+def test_partial_season_removes_all_recorded_downloads(settings, db, movie, store):
+    job_id, destination = published(db, settings, store, movie)
+    db.transition(job_id, "WAITING_FOR_RELEASE", "PARTIAL_SEASON", torrent_hash=None)
+    db.transition(job_id, "DOWNLOADING", torrent_hash="e" * 40)
+    db.transition(job_id, "WAITING_FOR_RELEASE", "PARTIAL_SEASON", torrent_hash=None)
+    DeletingSeerr([], missing={100}).reconcile(db, False)
+    downloader = Mock()
+    worker(settings, store, db, downloader).tick()
+    assert not destination.exists()
+    assert {call.args[0] for call in downloader.delete_owned.call_args_list} == {"d" * 40, "e" * 40}
+    assert db.job(job_id)["cancel_pause_done"] == 1
+    assert not db.execute("SELECT * FROM job_downloads")
+
+
+def test_legacy_partial_download_recovery_survives_retry(settings, db, movie, store):
+    job_id, destination = published(db, settings, store, movie)
+    db.execute("DELETE FROM job_downloads")
+    db.transition(job_id, "WAITING_FOR_RELEASE", "PARTIAL_SEASON", torrent_hash=None)
+    DeletingSeerr([], missing={100}).reconcile(db, False)
+    downloader = Mock()
+    downloader.hashes_for_sources.return_value = {"d" * 40}
+    downloader.delete_owned.side_effect = RuntimeError("offline")
+    worker(settings, store, db, downloader).tick()
+    assert not destination.exists()
+    assert db.job(job_id)["cancel_pause_done"] == 0
+    assert db.execute("SELECT torrent_hash FROM job_downloads")[0]["torrent_hash"] == "d" * 40
+    downloader.delete_owned.side_effect = None
+    db.execute("UPDATE jobs SET next_run=0 WHERE id=:id", id=job_id)
+    worker(settings, store, db, downloader).tick()
+    assert downloader.delete_owned.call_count == 2
+    assert db.job(job_id)["cancel_pause_done"] == 1
+
+
+def test_legacy_lookup_requires_exact_path_and_ownership(store):
+    downloader = Downloader.__new__(Downloader)
+    downloader.client = Mock()
+    row = {**BASE, "hash": "d" * 40, "save_path": str(store / "downloads/films")}
+    downloader.client.torrents_info.return_value = [row, {**row, "hash": "e" * 40, "tags": ""}]
+    downloader.client.torrents_files.return_value = [{"name": "Example/movie.mkv"}]
+    source = store / "downloads/films/Example/movie.mkv"
+    assert downloader.hashes_for_sources([str(source)], store / "downloads") == {"d" * 40}
+    assert downloader.hashes_for_sources([str(source.parent / "other.mkv")], store / "downloads") == set()
+
+
+def test_partial_download_shared_with_another_job_is_retained(settings, db, movie, store):
+    job_id, destination = published(db, settings, store, movie)
+    db.transition(job_id, "WAITING_FOR_RELEASE", "PARTIAL_SEASON", torrent_hash=None)
+    other = db.submit(movie.model_copy(update={"external_id": 999}), False)
+    db.transition(other, "DOWNLOADING", torrent_hash="d" * 40)
+    db.transition(other, "WAITING_FOR_RELEASE", "PARTIAL_SEASON", torrent_hash=None, delay=3600)
+    DeletingSeerr([], missing={100}).reconcile(db, False)
+    downloader = Mock()
+    worker(settings, store, db, downloader).tick()
+    assert destination.exists()
+    downloader.delete_owned.assert_not_called()
+    assert db.job(job_id)["cancel_pause_done"] == 0
 
 
 def test_delete_owned_requires_tag_and_managed_path():

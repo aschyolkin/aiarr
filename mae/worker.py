@@ -39,6 +39,8 @@ class Worker:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return False
+            self.release_idle_backups()
+            self.discard_downloads()
             self.pause_stopped_downloads()
             if self.settings.jellyfin_key.get_secret_value():
                 self.reconcile_completed()
@@ -137,12 +139,24 @@ class Worker:
             if row["device"] is None or (current.st_dev, current.st_ino) != (row["device"], row["inode"]):
                 raise ValueError("IMPORT_INODE_MISMATCH")
             planned.append((row, path, current))
+        hashes = {row["torrent_hash"] for row in self.db.execute(
+            "SELECT torrent_hash FROM job_downloads WHERE job_id=:id", id=job["id"]
+        )}
         if job["torrent_hash"]:
-            shared = self.db.execute(
-                "SELECT 1 FROM jobs WHERE torrent_hash=:hash AND id!=:id LIMIT 1",
-                hash=job["torrent_hash"], id=job["id"],
-            )
-            if shared:
+            hashes.add(job["torrent_hash"])
+        # Older partial imports predate the ownership journal. Recover their
+        # hashes before removing import records, and persist them for retries.
+        if imports:
+            hashes.update(self.downloader.hashes_for_sources(
+                [row["source"] for row in imports], store / "downloads"
+            ))
+            for torrent_hash in hashes:
+                self.db.execute(
+                    "INSERT OR IGNORE INTO job_downloads(job_id,torrent_hash) VALUES(:id,:hash)",
+                    id=job["id"], hash=torrent_hash,
+                )
+        for torrent_hash in hashes:
+            if self.shared_download(job["id"], torrent_hash):
                 raise ValueError("TORRENT_SHARED_WITH_ANOTHER_JOB")
         # All checks pass before the first destructive action.
         removed = False
@@ -162,8 +176,12 @@ class Worker:
                 "INSERT INTO events(job_id,state,reason,created) VALUES(:id,'CANCELLED',:reason,:now)",
                 id=job["id"], reason="SEERR_FILE_REMOVED", now=time.time(),
             )
-        if job["torrent_hash"]:
-            self.downloader.delete_owned(job["torrent_hash"], store / "downloads")
+        for torrent_hash in hashes:
+            self.downloader.delete_owned(torrent_hash, store / "downloads")
+            self.db.execute(
+                "DELETE FROM job_downloads WHERE job_id=:id AND torrent_hash=:hash",
+                id=job["id"], hash=torrent_hash,
+            )
         self.db.finish_deleted_request_cleanup(job["id"])
         if removed and self.settings.jellyfin_key.get_secret_value():
             try:
@@ -263,6 +281,11 @@ class Worker:
         self.db.transition(job["id"], "SEARCHING")
         selected = None
         decisions, errors = [], []
+        stalled = {(row["provider"], row["release_id"]) for row in self.db.execute(
+            "SELECT provider,release_id FROM stalled_releases WHERE job_id=:id", id=job["id"]
+        )}
+        skipped_stalled = False
+        eligible = []
         for provider in self.providers:
             stage = "SEARCHING"
             try:
@@ -277,6 +300,11 @@ class Worker:
                     )
                     if "IDENTITY_MISMATCH" in preliminary.reasons or "SEASON_MISMATCH" in preliminary.reasons:
                         decisions.append(preliminary.model_dump())
+                        continue
+                    if (release.provider, release.release_id) in stalled:
+                        preliminary.reasons.append("DOWNLOAD_STALLED_NO_PEERS")
+                        decisions.append(preliminary.model_dump())
+                        skipped_stalled = True
                         continue
                     self.db.transition(job["id"], "ENRICHING")
                     details = provider.fetch_details(release)
@@ -294,6 +322,7 @@ class Worker:
                     if candidate.reasons or candidate.unknown:
                         continue
                     rank = sum(candidate.score.values())
+                    eligible.append((rank, candidate, provider))
                     if selected is None or rank > selected[0]:
                         selected = (rank, candidate, provider)
             except ProviderError as exc:
@@ -310,6 +339,10 @@ class Worker:
         )
         self.db.transition(job["id"], "SELECTED" if selected else "WAITING_FOR_RELEASE", decision=decision)
         if not selected:
+            if skipped_stalled:
+                # Every usable release had no peers; seeders may return, so the
+                # next hourly search tries them again.
+                self.db.execute("DELETE FROM stalled_releases WHERE job_id=:id", id=job["id"])
             # Unknown properties of already rejected releases cannot turn a
             # wrong movie/season or forbidden source into a review candidate.
             state = (
@@ -340,12 +373,30 @@ class Worker:
             self.db.transition(job["id"], "NEEDS_REVIEW", "DRY_RUN_SELECTED")
             return
         active = self.db.execute(
-            "SELECT COUNT(*) n,SUM(reserved) bytes FROM jobs WHERE torrent_hash IS NOT NULL "
+            "SELECT COUNT(*) n,SUM(reserved)+SUM(backup_reserved) bytes FROM jobs WHERE torrent_hash IS NOT NULL "
             "AND state NOT IN ('AVAILABLE','CANCELLED')"
         )[0]
         if active["n"] >= self.settings.max_downloads:
             self.db.transition(job["id"], "RETRY_SCHEDULED", "DOWNLOAD_QUEUE_LIMIT", delay=60)
             return
+        torrent_hash, size, raw = self.prepare_torrent(provider, candidate, work)
+        committed = size + (active["bytes"] or 0)
+        if shutil.disk_usage(self.settings.store).free < committed + self.settings.reserve_bytes:
+            self.db.transition(job["id"], "RETRY_SCHEDULED", "INSUFFICIENT_SPACE", delay=600)
+            return
+        if self.db.job(job["id"])["state"] in {"CANCELLED", "NEEDS_REVIEW", "WAITING_FOR_RELEASE"}:
+            return
+        # Persist intent before network action. On ambiguous add timeout, monitor hash
+        # on restart; never add again blindly or issue a second candidate.
+        self.db.transition(
+            job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size, download_started=time.time()
+        )
+        self.start_torrent(torrent_hash, raw, work)
+        backups = [item for item in sorted(eligible, key=lambda item: -item[0]) if item[1] is not candidate]
+        if backups:
+            self.start_backup(job, work, backups[0], torrent_hash, committed)
+
+    def prepare_torrent(self, provider, candidate, work):
         handle = provider.resolve_download(candidate.release)
         url = handle.url.get_secret_value()
         if url.startswith("magnet:"):
@@ -378,23 +429,147 @@ class Worker:
             raise ValueError("TORRENT_SIZE_EXCEEDS_POLICY")
         if any(Path(f).suffix.lower() in {".rar", ".zip", ".iso", ".exe", ".bat", ".sh"} for f in files):
             raise ValueError("UNSUPPORTED_TORRENT_CONTENT")
-        if shutil.disk_usage(self.settings.store).free < size + self.settings.reserve_bytes + (
-            active["bytes"] or 0
-        ):
-            self.db.transition(job["id"], "RETRY_SCHEDULED", "INSUFFICIENT_SPACE", delay=600)
-            return
-        if self.db.job(job["id"])["state"] in {"CANCELLED", "NEEDS_REVIEW", "WAITING_FOR_RELEASE"}:
-            return
-        # Persist intent before network action. On ambiguous add timeout, monitor hash
-        # on restart; never add again blindly or issue a second candidate.
-        self.db.transition(job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size)
+        return torrent_hash, size, raw
+
+    def start_torrent(self, torrent_hash, raw, work, download_limit=None):
+        episodes = work.episodes if work.kind == "series" else None
         if raw is None:
+            if download_limit:
+                self.downloader.set_download_limit(torrent_hash, download_limit)
             if work.kind == "series":
-                self.downloader.complete_selection(torrent_hash, work.episodes)
+                self.downloader.complete_selection(torrent_hash, episodes)
             else:
                 self.downloader.resume(torrent_hash)
         else:
-            self.downloader.add(raw, torrent_hash, work.kind, work.episodes if work.kind == "series" else None)
+            self.downloader.add(raw, torrent_hash, work.kind, episodes, download_limit=download_limit)
+
+    def start_backup(self, job, work, ranked, primary_hash, committed):
+        """Start the runner-up slowly so a dead primary can be replaced at once."""
+        _, candidate, provider = ranked
+        if work.kind == "series":
+            candidate.parsed["download_episodes"] = work.episodes
+        try:
+            torrent_hash, size, raw = self.prepare_torrent(provider, candidate, work)
+        except (ProviderError, ValueError) as exc:
+            log.warning(json.dumps({"event": "backup_skipped", "job": job["id"], "reason": str(exc)[:80]}))
+            return
+        if torrent_hash == primary_hash or self.shared_download(job["id"], torrent_hash):
+            return
+        if shutil.disk_usage(self.settings.store).free < committed + size + self.settings.reserve_bytes:
+            return
+        self.db.transition(
+            job["id"], "DOWNLOADING", backup_hash=torrent_hash, backup_candidate=candidate.model_dump_json(),
+            backup_reserved=size,
+        )
+        try:
+            self.start_torrent(torrent_hash, raw, work, self.settings.backup_download_limit)
+        except Exception as exc:
+            log.warning(json.dumps({"event": "backup_start_failed", "job": job["id"],
+                                    "type": type(exc).__name__}))
+            self.queue_discard(job["id"], torrent_hash)
+            self.db.transition(job["id"], "DOWNLOADING", backup_hash=None, backup_candidate=None,
+                               backup_reserved=0)
+            self.discard_downloads()
+
+    def shared_download(self, job_id, torrent_hash):
+        return bool(self.db.execute(
+            "SELECT 1 FROM jobs WHERE (torrent_hash=:hash OR backup_hash=:hash) AND id!=:id UNION ALL "
+            "SELECT 1 FROM job_downloads WHERE torrent_hash=:hash AND job_id!=:id LIMIT 1",
+            hash=torrent_hash, id=job_id,
+        ))
+
+    def queue_discard(self, job_id, torrent_hash, stalled_candidate=None):
+        if stalled_candidate is not None:
+            release = json.loads(stalled_candidate or "{}").get("release") or {}
+            if release.get("provider") and release.get("release_id"):
+                self.db.execute(
+                    "INSERT OR IGNORE INTO stalled_releases(job_id,provider,release_id,torrent_hash,created) "
+                    "VALUES(:id,:provider,:release,:hash,:now)",
+                    id=job_id, provider=release["provider"], release=release["release_id"],
+                    hash=torrent_hash, now=time.time(),
+                )
+        self.db.execute(
+            "INSERT OR IGNORE INTO discard_downloads(job_id,torrent_hash) VALUES(:id,:hash)",
+            id=job_id, hash=torrent_hash,
+        )
+
+    def release_idle_backups(self):
+        """A backup only races while its job is downloading."""
+        for job in self.db.execute(
+            "SELECT id,backup_hash FROM jobs WHERE backup_hash IS NOT NULL AND state!='DOWNLOADING'"
+        ):
+            self.queue_discard(job["id"], job["backup_hash"])
+            self.db.execute(
+                "UPDATE jobs SET backup_hash=NULL,backup_candidate=NULL,backup_reserved=0 WHERE id=:id AND backup_hash=:hash",
+                id=job["id"], hash=job["backup_hash"],
+            )
+
+    def discard_downloads(self):
+        """Delete queued torrents once no job refers to them as active or backup."""
+        # A crash between queueing and the job update leaves intents for hashes
+        # that are still current; the race is re-decided, so drop them.
+        for table in ("discard_downloads", "stalled_releases"):
+            self.db.execute(
+                f"DELETE FROM {table} WHERE torrent_hash IS NOT NULL AND EXISTS(SELECT 1 FROM jobs j "
+                f"WHERE j.id={table}.job_id AND {table}.torrent_hash IN (j.torrent_hash,j.backup_hash))"
+            )
+        for row in self.db.execute(
+            "SELECT d.job_id,d.torrent_hash FROM discard_downloads d JOIN jobs j ON j.id=d.job_id "
+            "WHERE d.torrent_hash IS NOT j.torrent_hash AND d.torrent_hash IS NOT j.backup_hash"
+        ):
+            try:
+                if not self.shared_download(row["job_id"], row["torrent_hash"]):
+                    self.downloader.delete_owned(row["torrent_hash"], self.settings.store / "downloads")
+                self.db.execute(
+                    "DELETE FROM job_downloads WHERE job_id=:id AND torrent_hash=:hash",
+                    id=row["job_id"], hash=row["torrent_hash"],
+                )
+                self.db.execute(
+                    "DELETE FROM discard_downloads WHERE job_id=:id AND torrent_hash=:hash",
+                    id=row["job_id"], hash=row["torrent_hash"],
+                )
+            except Exception as exc:
+                log.warning(json.dumps({"event": "download_discard_failed", "job": row["job_id"],
+                                        "type": type(exc).__name__}))
+
+    def decide_race(self, job, info):
+        """After stall_seconds keep whichever torrent receives data; True if the job changed."""
+        if (
+            info.get("state") not in {"metaDL", "forcedMetaDL", "stalledDL", "downloading", "forcedDL"}
+            or not info.get("added_on")
+            or time.time() - max(float(info["added_on"]), job["download_started"] or 0) < self.settings.stall_seconds
+        ):
+            return False
+        if int(info.get("downloaded") or 0):
+            if job["backup_hash"]:
+                self.queue_discard(job["id"], job["backup_hash"])
+                self.db.transition(
+                    job["id"], "DOWNLOADING", backup_hash=None, backup_candidate=None, backup_reserved=0, delay=30
+                )
+                self.discard_downloads()
+                return True
+            return False
+        backup = self.downloader.info(job["backup_hash"]) if job["backup_hash"] else None
+        if backup and int(backup.get("downloaded") or 0):
+            self.downloader.set_download_limit(job["backup_hash"], -1)
+            self.queue_discard(job["id"], job["torrent_hash"], job["candidate"])
+            self.db.transition(
+                job["id"], "DOWNLOADING", "BACKUP_PROMOTED", delay=30,
+                torrent_hash=job["backup_hash"], candidate=job["backup_candidate"],
+                reserved=int(backup.get("size") or job["reserved"] or 0),
+                backup_hash=None, backup_candidate=None, backup_reserved=0,
+            )
+        else:
+            self.queue_discard(job["id"], job["torrent_hash"], job["candidate"])
+            if job["backup_hash"]:
+                self.queue_discard(job["id"], job["backup_hash"], job["backup_candidate"])
+            self.db.transition(
+                job["id"], "RETRY_SCHEDULED", "DOWNLOAD_STALLED_NO_PEERS",
+                torrent_hash=None, candidate=None, reserved=0, backup_hash=None, backup_candidate=None,
+                backup_reserved=0,
+            )
+        self.discard_downloads()
+        return True
 
     def monitor(self, job, work):
         info = self.downloader.info(job["torrent_hash"])
@@ -411,6 +586,8 @@ class Worker:
         if info.get("state") in {"error", "missingFiles"}:
             raise ValueError("DOWNLOAD_FILES_OR_STORAGE_ERROR")
         if float(info["progress"]) < 1:
+            if self.decide_race(job, info):
+                return
             self.db.transition(job["id"], "DOWNLOADING", delay=30)
             return
         if self.settings.dry_run or job["dry_run"]:

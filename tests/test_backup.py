@@ -12,7 +12,7 @@ def test_wal_snapshot_restore_keeps_jobs_and_does_not_change_source(settings, db
     before = db.jobs()
     snapshot = tmp_path / 'snapshot'
     manifest = backup(settings.state_dir, snapshot)
-    assert manifest['schema'] == '0007'
+    assert manifest['schema'] == '0009'
     destination = tmp_path / 'restored'
     restore_new(snapshot, destination)
     restored = Database(destination)

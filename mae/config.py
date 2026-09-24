@@ -122,6 +122,8 @@ class Settings(BaseSettings):
     enrichment_limit: int = Field(default=20, ge=1, le=100)
     reserve_bytes: int = Field(default=5 * 1024**3, ge=0)
     max_downloads: int = Field(default=2, ge=1, le=10)
+    stall_seconds: int = Field(default=180, ge=60, le=86400)
+    backup_download_limit: int = Field(default=100 * 1024, ge=1024)
 
     @model_validator(mode="after")
     def validate_names(self):

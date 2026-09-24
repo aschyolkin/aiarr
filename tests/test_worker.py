@@ -6,7 +6,7 @@ import httpx
 
 from mae.config import ProviderConfig
 from mae.db import Database
-from mae.domain import Evidence, Outcome, ProviderError, ReleaseDetails, SearchResult, Work
+from mae.domain import DownloadHandle, Evidence, Outcome, ProviderError, ReleaseDetails, SearchResult, Work
 from mae.providers import TorznabProvider
 from mae.worker import Worker
 
@@ -141,3 +141,223 @@ def test_matching_unknown_audio_still_requires_review(settings, db, movie):
     Worker(settings,db,[provider],downloader).tick()
     assert db.job(job_id)['state'] == 'NEEDS_REVIEW'
     downloader.add.assert_not_called()
+
+
+
+def _provider(*release_ids):
+    provider = Mock()
+    provider.config.name = "fixture"
+    provider.config.protocol = "torznab"
+    provider.search.return_value = [
+        SearchResult(provider="fixture", release_id=rid, title="Example.2024.1080p.WEB-DL.H.264", size=1000)
+        for rid in release_ids
+    ]
+    provider.fetch_details.return_value = ReleaseDetails(evidence=[
+        Evidence(id="card", text="Audio #1: Russian", method="fixture")
+    ])
+    provider.resolve_download.side_effect = lambda release: DownloadHandle(url=f"http://gw.test/{release.release_id}")
+    provider.http.get.side_effect = lambda url, **_: url.rsplit("/", 1)[1].encode()
+    return provider
+
+
+def _live(settings, monkeypatch):
+    monkeypatch.setattr("mae.worker.Jellyfin.coverage", lambda _self, _work: set())
+    monkeypatch.setattr("mae.worker.shutil.disk_usage", lambda _path: Mock(free=10**15))
+    monkeypatch.setattr("mae.worker.torrent_metadata", lambda raw: (raw.decode().ljust(40, "0"), 1000, ["a.mkv"]))
+    return settings.model_copy(update={"dry_run": False})
+
+
+def _h(name):
+    return name.ljust(40, "0")
+
+
+def _racing(db, movie, primary="first", backup="second"):
+    job_id = db.submit(movie)
+    db.transition(
+        job_id, "DOWNLOADING", torrent_hash=_h(primary), backup_hash=_h(backup),
+        candidate=json.dumps({"release": {"provider": "fixture", "release_id": primary}}),
+        backup_candidate=json.dumps({"release": {"provider": "fixture", "release_id": backup}}),
+    )
+    return job_id
+
+
+def _torrent(**overrides):
+    return {"category": "mae", "tags": "media-acquisition-engine", "progress": 0, "downloaded": 0,
+            "state": "stalledDL", "added_on": time.time() - 181, "size": 1000, **overrides}
+
+
+def _downloader(torrents):
+    downloader = Mock()
+    downloader.info.side_effect = lambda torrent_hash: torrents.get(torrent_hash)
+    return downloader
+
+
+def test_best_two_candidates_start_together_with_slow_backup(settings, db, movie, monkeypatch):
+    settings = _live(settings, monkeypatch)
+    job_id = db.submit(movie, False)
+    downloader = Mock()
+
+    Worker(settings, db, [_provider("first", "second", "third")], downloader).tick()
+
+    job = db.job(job_id)
+    assert (job["torrent_hash"], job["backup_hash"]) == (_h("first"), _h("second"))
+    assert json.loads(job["backup_candidate"])["release"]["release_id"] == "second"
+    calls = [(c.args[1], c.kwargs["download_limit"]) for c in downloader.add.call_args_list]
+    assert calls == [(_h("first"), None), (_h("second"), settings.backup_download_limit)]
+
+
+def test_backup_is_dropped_when_primary_downloads(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(downloaded=1), _h("second"): _torrent()})
+
+    Worker(settings, db, [], downloader).tick()
+
+    downloader.delete_owned.assert_called_once_with(_h("second"), settings.store / "downloads")
+    job = db.job(job_id)
+    assert (job["state"], job["torrent_hash"], job["backup_hash"]) == ("DOWNLOADING", _h("first"), None)
+    assert not db.execute("SELECT 1 FROM stalled_releases")
+
+
+def test_backup_is_promoted_when_only_it_downloads(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(), _h("second"): _torrent(downloaded=1, size=777)})
+
+    Worker(settings, db, [], downloader).tick()
+
+    downloader.set_download_limit.assert_called_once_with(_h("second"), -1)
+    downloader.delete_owned.assert_called_once_with(_h("first"), settings.store / "downloads")
+    job = db.job(job_id)
+    assert (job["reason"], job["torrent_hash"], job["backup_hash"], job["reserved"]) == (
+        "BACKUP_PROMOTED", _h("second"), None, 777)
+    assert json.loads(job["candidate"])["release"]["release_id"] == "second"
+    assert [r["release_id"] for r in db.execute("SELECT release_id FROM stalled_releases")] == ["first"]
+
+
+def test_both_stalled_switch_to_next_two_candidates(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(), _h("second"): _torrent()})
+    worker = Worker(settings, db, [_provider("first", "second", "third", "fourth")], downloader)
+
+    worker.tick()
+
+    assert {c.args[0] for c in downloader.delete_owned.call_args_list} == {_h("first"), _h("second")}
+    job = db.job(job_id)
+    assert (job["state"], job["reason"], job["torrent_hash"], job["backup_hash"]) == (
+        "RETRY_SCHEDULED", "DOWNLOAD_STALLED_NO_PEERS", None, None)
+    assert not db.execute("SELECT 1 FROM discard_downloads")
+    db.execute("UPDATE jobs SET next_run=0 WHERE id=:id", id=job_id)
+
+    worker.tick()
+
+    job = db.job(job_id)
+    assert job["reason"] == "DRY_RUN_SELECTED"
+    assert json.loads(job["candidate"])["release"]["release_id"] == "third"
+    skipped = {c["release"]["release_id"]: c["reasons"] for c in json.loads(job["decision"])["candidates"]}
+    assert skipped["first"] == skipped["second"] == ["DOWNLOAD_STALLED_NO_PEERS"]
+
+
+def test_race_waits_while_young_or_paused(settings, db, movie):
+    for torrent in (_torrent(added_on=time.time() - 60), _torrent(state="stoppedDL")):
+        job_id = _racing(db, movie)
+        downloader = _downloader({_h("first"): torrent, _h("second"): _torrent(downloaded=1)})
+        Worker(settings, db, [], downloader).tick()
+        downloader.delete_owned.assert_not_called()
+        job = db.job(job_id)
+        assert (job["state"], job["torrent_hash"], job["backup_hash"]) == ("DOWNLOADING", _h("first"), _h("second"))
+        db.execute("DELETE FROM job_downloads")
+        db.execute("DELETE FROM events")
+        db.execute("DELETE FROM jobs")
+
+
+def test_stall_threshold_is_configurable(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(added_on=time.time() - 120), _h("second"): _torrent()})
+    Worker(settings.model_copy(update={"stall_seconds": 60}), db, [], downloader).tick()
+    assert db.job(job_id)["reason"] == "DOWNLOAD_STALLED_NO_PEERS"
+
+
+def test_backup_of_a_cancelled_job_is_removed(settings, db, movie):
+    job_id = _racing(db, movie)
+    db.cancel_from_admin(job_id)
+    downloader = _downloader({_h("first"): _torrent(), _h("second"): _torrent()})
+
+    Worker(settings, db, [], downloader).tick()
+
+    assert _h("second") in {c.args[0] for c in downloader.delete_owned.call_args_list}
+    assert db.job(job_id)["backup_hash"] is None
+
+
+def test_failed_discard_is_retried_next_tick(settings, db, movie):
+    job_id = _racing(db, movie)
+    downloader = _downloader({_h("first"): _torrent(downloaded=1), _h("second"): _torrent()})
+    downloader.delete_owned.side_effect = [ProviderError(Outcome.TEMPORARY_FAILURE), True]
+    worker = Worker(settings, db, [], downloader)
+
+    worker.tick()
+    assert db.job(job_id)["backup_hash"] is None
+    assert db.execute("SELECT 1 FROM discard_downloads")
+
+    worker.tick()
+    assert not db.execute("SELECT 1 FROM discard_downloads")
+
+
+def test_all_stalled_candidates_wait_and_are_retried_later(settings, db, movie):
+    job_id = db.submit(movie)
+    for rid in ("first", "second"):
+        db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture',:rid,NULL,0)", id=job_id, rid=rid)
+
+    Worker(settings, db, [_provider("first", "second")], Mock()).tick()
+
+    assert (db.job(job_id)["state"], db.job(job_id)["reason"]) == ("WAITING_FOR_RELEASE", "NO_PROVEN_CANDIDATE")
+    assert not db.execute("SELECT 1 FROM stalled_releases WHERE job_id=:id", id=job_id)
+
+
+def test_magnet_backup_is_limited_before_it_resumes(settings, db, movie):
+    downloader = Mock()
+    Worker(settings, db, [], downloader).start_torrent(_h("m"), None, movie, 2048)
+    assert [c[0] for c in downloader.method_calls] == ["set_download_limit", "resume"]
+
+
+def test_backup_start_failure_keeps_primary_downloading(settings, db, movie, monkeypatch):
+    settings = _live(settings, monkeypatch)
+    job_id = db.submit(movie, False)
+    downloader = Mock()
+    downloader.add.side_effect = [None, ProviderError(Outcome.TEMPORARY_FAILURE)]
+
+    Worker(settings, db, [_provider("first", "second")], downloader).tick()
+
+    job = db.job(job_id)
+    assert (job["state"], job["torrent_hash"], job["backup_hash"], job["attempts"]) == (
+        "DOWNLOADING", _h("first"), None, 0)
+    downloader.delete_owned.assert_called_once_with(_h("second"), settings.store / "downloads")
+
+
+def test_interrupted_promotion_intent_does_not_delete_current_torrent(settings, db, movie):
+    job_id = _racing(db, movie)
+    db.execute("INSERT INTO discard_downloads VALUES(:id,:hash)", id=job_id, hash=_h("first"))
+    db.execute("INSERT INTO stalled_releases VALUES(:id,'fixture','first',:hash,0)", id=job_id, hash=_h("first"))
+    downloader = _downloader({_h("first"): _torrent(downloaded=1), _h("second"): _torrent()})
+
+    Worker(settings, db, [], downloader).tick()
+
+    assert [c.args[0] for c in downloader.delete_owned.call_args_list] == [_h("second")]
+    assert db.job(job_id)["torrent_hash"] == _h("first")
+    assert not db.execute("SELECT 1 FROM stalled_releases")
+
+
+def test_race_timer_starts_when_aiarr_started_the_download(settings, db, movie):
+    job_id = _racing(db, movie)
+    db.transition(job_id, "DOWNLOADING", download_started=time.time())
+    downloader = _downloader({_h("first"): _torrent(added_on=time.time() - 9999), _h("second"): _torrent()})
+    Worker(settings, db, [], downloader).tick()
+    downloader.delete_owned.assert_not_called()
+
+
+def test_backup_size_counts_against_free_space(settings, db, movie, monkeypatch):
+    settings = _live(settings, monkeypatch)
+    other = _racing(db, Work(kind="movie", external_id=2, title="Other", year=2024))
+    db.execute("UPDATE jobs SET reserved=100,backup_reserved=1000000 WHERE id=:id", id=other)
+    monkeypatch.setattr("mae.worker.shutil.disk_usage", lambda _p: Mock(free=10**6 + settings.reserve_bytes))
+    job_id = db.submit(movie, False)
+    Worker(settings, db, [_provider("first")], _downloader({_h("first"): _torrent(downloaded=1)})).tick()
+    assert db.job(job_id)["reason"] == "INSUFFICIENT_SPACE"

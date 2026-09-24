@@ -107,6 +107,8 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <label class="field">Одновременные загрузки<input id="max_downloads" type="number" min="1" max="10"></label>
 <label class="field">Повторных попыток<input id="max_attempts" type="number" min="1" max="10"></label>
 <label class="field">Кандидатов на обогащение<input id="enrichment_limit" type="number" min="1" max="100"></label>
+<label class="field">Смена раздачи без скачивания, мин<input id="stall_minutes" type="number" min="1" max="1440"></label>
+<label class="field">Скорость запасной раздачи, КиБ/с<input id="backup_kib" type="number" min="1"></label>
 <label class="field">Резерв диска, ГиБ<input id="reserve_gib" type="number" min="0"></label>
 <label class="field">Модель DeepSeek<select id="deepseek_model"><option value="deepseek-flash">deepseek-flash</option></select></label>
 <label class="field">Вызовов DeepSeek в день<input id="deepseek_daily_calls" type="number" min="0"></label>
@@ -186,6 +188,8 @@ function renderConfig(){
   'max_downloads','max_attempts','enrichment_limit','deepseek_daily_calls','deepseek_daily_tokens',
   'deepseek_request_calls','deepseek_request_tokens'])byId(key).value=s[key];
  byId('reserve_gib').value=Math.round(s.reserve_bytes/1073741824);
+ byId('stall_minutes').value=Math.round(s.stall_seconds/60);
+ byId('backup_kib').value=Math.round(s.backup_download_limit/1024);
  for(const key of ['qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key']){
   byId(key).value='';byId(key).placeholder=s[key+'_configured']?'Сохранён':'Не задан';
  }
@@ -208,7 +212,9 @@ function collectConfig(){
     key==='interval'?Number(input.value):input.value.trim();
   }return provider;
  });
- const values={policy,providers,reserve_bytes:Number(byId('reserve_gib').value)*1073741824};
+ const values={policy,providers,reserve_bytes:Number(byId('reserve_gib').value)*1073741824,
+  stall_seconds:Number(byId('stall_minutes').value)*60,
+  backup_download_limit:Number(byId('backup_kib').value)*1024};
  for(const key of ['qbit_url','qbit_username','jellyfin_url','seerr_url','deepseek_model',
   'qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key'])values[key]=byId(key).value.trim();
  for(const key of ['max_downloads','max_attempts','enrichment_limit','deepseek_daily_calls',
@@ -228,7 +234,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  NO_PROVEN_CANDIDATE:'Подходящий релиз пока не подтверждён',
  WAITING_FOR_JELLYFIN:'Файл добавлен, ожидается сканирование Jellyfin',
  ALREADY_IN_LIBRARY:'Уже есть в Jellyfin',DRY_RUN_SELECTED:'Релиз найден, загрузка отключена',
- INSUFFICIENT_SPACE:'Недостаточно места на диске',DOWNLOAD_QUEUE_LIMIT:'Очередь загрузок заполнена',
+ INSUFFICIENT_SPACE:'Недостаточно места на диске',DOWNLOAD_STALLED_NO_PEERS:'Раздачи не качаются — выбираются следующие релизы',BACKUP_PROMOTED:'Основная раздача стояла — качается запасная',DOWNLOAD_QUEUE_LIMIT:'Очередь загрузок заполнена',
  VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного',RUSSIAN_AUDIO_NOT_TAGGED:'Не подтверждена русская аудиодорожка',DOWNLOAD_REMOVED:'Закачка удалена из qBittorrent',
  SEERR_REQUEST_DELETED:'Заявка удалена в Seerr, файлы удаляются',SEERR_FILE_REMOVED:'Файл удалён из библиотеки',
  SEERR_CLEANUP_DONE:'Файлы и торрент удалены',SEERR_CLEANUP_RETRY:'Удаление повторится позже',
@@ -239,7 +245,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
  LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
  NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
-const candidateReasons={IDENTITY_MISMATCH:'другое название',YEAR_UNVERIFIED:'год не совпадает или не указан',
+const candidateReasons={IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась, нет сидов',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
  SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
  CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',

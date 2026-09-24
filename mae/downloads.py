@@ -114,8 +114,10 @@ class Downloader:
             raise ValueError("TORRENT_OWNED_BY_ANOTHER_SERVICE")
         return row
 
-    def add(self, raw, torrent_hash, kind, wanted_episodes=None):
+    def add(self, raw, torrent_hash, kind, wanted_episodes=None, download_limit=None):
         if self.info(torrent_hash):
+            if download_limit:
+                self.set_download_limit(torrent_hash, download_limit)
             if kind == "series":
                 self.complete_selection(torrent_hash, wanted_episodes)
             return
@@ -133,6 +135,7 @@ class Downloader:
             ),
             is_stopped=True if kind == "series" else None,
             use_auto_torrent_management=False,
+            download_limit=download_limit,
         )
         # Newer qBittorrent versions can return structured add metadata.
         # Reconcile actual client state rather than assuming one response string.
@@ -223,9 +226,38 @@ class Downloader:
         self.info(torrent_hash)  # ownership check before modifying state
         self.client.torrents_resume(torrent_hashes=torrent_hash)
 
+    def set_download_limit(self, torrent_hash, limit):
+        """Bytes per second; -1 removes the per-torrent limit."""
+        self.info(torrent_hash)  # ownership check before modifying state
+        self.client.torrents_set_download_limit(limit=limit, torrent_hashes=torrent_hash)
+
     def files(self, torrent_hash):
         self.info(torrent_hash)  # ownership check before accessing paths
         return self.client.torrents_files(torrent_hash=torrent_hash)
+
+    def hashes_for_sources(self, sources, downloads_root):
+        """Recover legacy ownership only from exact journaled download paths."""
+        from pathlib import Path
+
+        from mae.verification import check_path
+
+        wanted = {Path(source) for source in sources}
+        for path in wanted:
+            check_path(path, downloads_root)
+        found = set()
+        for row in self.client.torrents_info(category=self.category):
+            if row.get("category") != self.category or "media-acquisition-engine" not in {
+                tag.strip() for tag in row.get("tags", "").split(",")
+            }:
+                continue
+            save_path = Path(row.get("save_path") or "")
+            check_path(save_path, downloads_root)
+            for file in self.client.torrents_files(torrent_hash=row["hash"]):
+                path = save_path / str(safe_relative(file["name"]))
+                check_path(path, downloads_root)
+                if path in wanted:
+                    found.add(row["hash"])
+        return found
 
     def delete_owned(self, torrent_hash, downloads_root):
         """Delete torrent and payload only after category, tag and path checks."""

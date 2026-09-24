@@ -441,7 +441,10 @@ class Database:
                 )
 
     def transition(self, job_id, state, reason=None, delay=0, **updates):
-        allowed = {"attempts", "candidate", "torrent_hash", "reserved", "decision", "dry_run"}
+        allowed = {
+            "attempts", "candidate", "torrent_hash", "reserved", "decision", "dry_run",
+            "backup_hash", "backup_candidate", "backup_reserved", "download_started",
+        }
         if set(updates) - allowed:
             raise ValueError("unsupported job update")
         params = dict(id=job_id, state=state, reason=reason, next_run=time.time() + delay, **updates)
@@ -452,6 +455,12 @@ class Database:
             )
             if not changed.rowcount:
                 return
+            for key in ("torrent_hash", "backup_hash"):
+                if updates.get(key):
+                    conn.execute(
+                        text("INSERT OR IGNORE INTO job_downloads(job_id,torrent_hash) VALUES(:id,:hash)"),
+                        {"id": job_id, "hash": updates[key]},
+                    )
             conn.execute(
                 text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,:state,:reason,:created)"),
                 dict(id=job_id, state=state, reason=reason, created=time.time()),
