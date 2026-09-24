@@ -258,7 +258,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
  LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
  NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
-const candidateReasons={FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
+const candidateReasons={VIDEO_CODEC_NOT_ALLOWED:'кодек не из списка',FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
  SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
  CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',
@@ -270,7 +270,7 @@ const CHECKS=['IDENTITY_MISMATCH','YEAR_OR_SEASON','SOURCE_NOT_ALLOWED','RESOLUT
 function candidatePercent(c){
  const bad=new Set([...(c.reasons||[]),...(c.unknown||[])]);
  if(bad.has('YEAR_UNVERIFIED')||bad.has('SEASON_MISMATCH')||bad.has('EPISODE_MISMATCH')||bad.has('NOT_A_MOVIE'))bad.add('YEAR_OR_SEASON');
- if(bad.has('TOO_LARGE')||bad.has('FILE_TOO_LARGE'))bad.add('size');if(bad.has('CODEC_EVIDENCE_CONFLICT'))bad.add('compatible_video_codec');
+ if(bad.has('TOO_LARGE')||bad.has('FILE_TOO_LARGE'))bad.add('size');if(bad.has('CODEC_EVIDENCE_CONFLICT')||bad.has('VIDEO_CODEC_NOT_ALLOWED'))bad.add('compatible_video_codec');
  return Math.round(100*CHECKS.filter(x=>!bad.has(x)).length/CHECKS.length);
 }
 const sizeText=b=>typeof b==='number'?(b/1073741824).toFixed(b>=10737418240?0:1)+' ГиБ':'—';

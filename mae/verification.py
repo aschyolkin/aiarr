@@ -76,7 +76,7 @@ def verify(data, policy, expected=None):
             raise ValueError("VIDEO_RESOLUTION_BELOW_POLICY")
         if expected and expected.get("screen_size") != f"{resolution}p":
             raise ValueError("VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE")
-        if expected and codecs.get(expected.get("video_codec")) != video.get("codec_name"):
+        if expected and expected.get("video_codec") and codecs.get(expected["video_codec"]) != video.get("codec_name"):
             raise ValueError("VIDEO_CODEC_DIFFERS_FROM_RELEASE")
     if policy.russian_required and not any(
         a.get("tags", {}).get("language", "").lower() in {"rus", "ru"} for a in audio

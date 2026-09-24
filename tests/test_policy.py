@@ -171,3 +171,16 @@ def test_secrets_removed():
     )
     cleaned = clean_text(raw)
     assert all(s not in cleaned for s in ["bad()", "secret", "passkey", "xyz", "user@example.com"])
+
+
+def test_kinozal_style_title_matches_alias_words_with_year():
+    from mae.domain import Work
+    from mae.policies import title_matches
+
+    work = Work(kind="movie", external_id=1, title="LEGO Marvel Человек-Паук: Раздражённый Веномом",
+                aliases=["LEGO Marvel Spider-Man: Vexed by Venom"], year=2019)
+    title = "Marvel LEGO. Marvel Super Heroes. Spider-Man. Vexed by Venom"
+    assert title_matches(title, work, 2019)
+    assert not title_matches(title, work, 2020)
+    short = Work(kind="movie", external_id=2, title="It", year=2017)
+    assert not title_matches("It Follows", short, 2017)

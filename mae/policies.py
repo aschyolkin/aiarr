@@ -1,4 +1,22 @@
+import re
+
 from mae.parsing import episode_keys, normalize_title
+
+
+def _words(value):
+    return re.findall(r"\w+", value.casefold())
+
+
+def title_matches(title, work, year):
+    """Exact normalized match, or for a movie of the right year every word of a
+    title/alias of at least three words appearing in the release title."""
+    names = [work.title, *work.aliases]
+    if normalize_title(title) in {normalize_title(t) for t in names}:
+        return True
+    if work.kind != "movie" or work.year is None or year != work.year:
+        return False
+    words = set(_words(title))
+    return any(len(_words(name)) >= 3 and set(_words(name)) <= words for name in names)
 
 
 def evaluate(candidate, work, policy):
@@ -6,8 +24,7 @@ def evaluate(candidate, work, policy):
     c.reasons, c.unknown, c.score = [], [], {}
     p = c.parsed
     title = p.get("title", "")
-    aliases = {normalize_title(t) for t in [work.title, *work.aliases]}
-    if not isinstance(title, str) or normalize_title(title) not in aliases:
+    if not isinstance(title, str) or not title_matches(title, work, p.get("year")):
         c.reasons.append("IDENTITY_MISMATCH")
     if work.kind == "movie":
         if p.get("year") != work.year or work.year is None:
@@ -31,8 +48,9 @@ def evaluate(candidate, work, policy):
     resolution = str(p.get("screen_size", ""))
     if resolution not in [f"{n}p" for n in [*policy.resolutions, *policy.fallback_resolutions]]:
         c.reasons.append("RESOLUTION_NOT_ALLOWED")
-    if p.get("video_codec") not in policy.codecs:
-        c.unknown.append("compatible_video_codec")
+    # An unlabeled codec is left to ffprobe verification after download.
+    if p.get("video_codec") is not None and p.get("video_codec") not in policy.codecs:
+        c.reasons.append("VIDEO_CODEC_NOT_ALLOWED")
     if p.get("video_codec_conflict"):
         c.reasons.append("CODEC_EVIDENCE_CONFLICT")
     if c.release.size is None:

@@ -69,3 +69,11 @@ def test_new_episode_reopens_completed_series(db):
     assert db.job(job_id)["torrent_hash"] is None
     assert db.job(job_id)["candidate"] is None
     assert db.job(job_id)["reserved"] == 0
+
+
+def test_unlabeled_release_codec_is_checked_only_against_policy():
+    data = {"format": {"duration": "3600"}, "streams": [
+        {"codec_type": "video", "codec_name": "h264", "width": 1920, "height": 1080},
+        {"codec_type": "audio", "tags": {"language": "rus"}},
+    ]}
+    verify(data, Policy(), {"screen_size": "1080p"})

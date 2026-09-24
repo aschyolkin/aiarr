@@ -320,16 +320,21 @@ class Worker:
                         continue
                     self.db.transition(job["id"], "ENRICHING")
                     details = provider.fetch_details(release)
-                    candidate = evaluate(parse_candidate(release, details), work, self.settings.policy)
-                    if candidate.unknown and not candidate.reasons and details.evidence:
+                    parsed_candidate = parse_candidate(release, details)
+                    candidate = evaluate(parsed_candidate, work, self.settings.policy)
+                    if candidate.unknown and not candidate.reasons:
+                        # The release title is evidence too; some sources have no card.
                         interpretation = DeepSeek(self.settings, self.db).interpret(
-                            details.evidence, request_key=f"job:{job['id']}:generation:{job['generation']}"
+                            parsed_candidate.evidence, request_key=f"job:{job['id']}:generation:{job['generation']}"
                         )
                         if interpretation:
-                            # LLM-only mandatory claims require review in this version.
-                            # Exact quotes alone do not prove semantic entailment.
-                            candidate.claims.extend(interpretation.claims)
-                            candidate.unknown.append("llm_interpretation_requires_review")
+                            # Claims carry exact evidence quotes; ffprobe re-checks
+                            # codec and Russian audio in the downloaded file.
+                            parsed_candidate.claims.extend(interpretation.claims)
+                            codecs = {c.value for c in interpretation.claims if c.field == "video_codec"}
+                            if len(codecs) == 1 and not parsed_candidate.parsed.get("video_codec"):
+                                parsed_candidate.parsed["video_codec"] = next(iter(codecs))
+                            candidate = evaluate(parsed_candidate, work, self.settings.policy)
                     decisions.append(candidate.model_dump())
                     publish_progress()
                     if candidate.reasons or candidate.unknown:

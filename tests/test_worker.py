@@ -597,3 +597,34 @@ def test_720p_backup_replaces_1080p_that_would_take_too_long(settings, db, movie
     })
     Worker(settings, db, [], downloader).tick()
     assert (db.job(job_id)["reason"], db.job(job_id)["torrent_hash"]) == ("BACKUP_PROMOTED", _h("second"))
+
+
+def test_deepseek_claims_and_unlabeled_codec_allow_selection(settings, db, movie, monkeypatch):
+    from mae.domain import Claim
+
+    provider = _provider("rutracker")
+    provider.search.return_value[0].title = "Example.2024.1080p.WEB-DL"
+    provider.fetch_details.return_value = ReleaseDetails(evidence=[
+        Evidence(id="card", text="Перевод: Профессиональный (многоголосый) x2", method="fixture")
+    ])
+    claim = Claim(field="audio_language", value="rus", evidence_id="card",
+                  quote="Перевод: Профессиональный (многоголосый) x2", method="deepseek")
+    monkeypatch.setattr("mae.worker.DeepSeek.interpret", lambda *_a, **_k: Mock(claims=[claim]))
+    job_id = db.submit(movie)
+
+    Worker(settings, db, [provider], Mock()).tick()
+
+    job = db.job(job_id)
+    assert job["reason"] == "DRY_RUN_SELECTED"
+    assert json.loads(job["candidate"])["release"]["release_id"] == "rutracker"
+
+
+def test_release_title_alone_is_sent_to_deepseek(settings, db, movie, monkeypatch):
+    provider = _provider("kinozal")
+    provider.search.return_value[0].title = "Example 2024 MVO WEBDL 1080p - RUSSIAN"
+    provider.fetch_details.return_value = ReleaseDetails()
+    seen = []
+    monkeypatch.setattr("mae.worker.DeepSeek.interpret", lambda _self, evidence, **_k: seen.append(evidence))
+    db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    assert [e.id for e in seen[0]] == ["title"]
