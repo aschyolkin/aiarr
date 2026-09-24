@@ -271,9 +271,9 @@ function renderCandidates(decision,chosen){
  const body=byId('candidates');body.replaceChildren();
  const chosenId=chosen?.release?chosen.release.provider+':'+chosen.release.release_id:null;
  const fits=list.filter(x=>x.fit).length;
- byId('cand-summary').textContent=list.length?'Проверено '+list.length+' релизов, подходят '+fits+
+ byId('cand-summary').textContent=(decision?.partial?'Идёт поиск… ':'')+(list.length?'Проверено '+list.length+' релизов, подходят '+fits+
   '. Процент — доля пройденных проверок: название, год/сезон, источник, разрешение, кодек, размер, русская дорожка.'
-  :'Кандидатов пока нет.';
+  :'Кандидатов пока нет.');
  for(const {c,fit,pct} of list){
   const r=c.release||{},p=c.parsed||{},claims=c.claims||[];
   const tr=document.createElement('tr');const isChosen=chosenId===r.provider+':'+r.release_id;
@@ -451,9 +451,23 @@ function route(){
  for(const a of document.querySelectorAll('nav.top a'))a.classList.toggle('active',a.dataset.page===page);
 }
 window.addEventListener('hashchange',route);
+const ACTIVE_SEARCH=new Set(['REQUESTED','SEARCHING','ENRICHING','SELECTED']);
+let searching=false;
 async function refresh(){
  const [overview,sources,profiles,metrics]=await Promise.all([
   api('/admin/overview'),api('/admin/sources'),api('/admin/profiles'),api('/admin/metrics')]);
+ renderJobs(overview);
+ renderSources(sources);show('profiles',profiles);show('metrics',metrics);
+ if(config===null){config=await api('/admin/config');renderConfig();}
+ renderKnownSources(sources,await api('/admin/indexers').catch(()=>[]));
+ if(selected!==null)await inspect(selected);
+}
+async function quickRefresh(){
+ renderJobs(await api('/admin/overview'));
+ if(selected!==null)await inspect(selected);
+}
+function renderJobs(overview){
+ searching=overview.jobs.some(job=>ACTIVE_SEARCH.has(job.state));
  byId('mode').textContent=overview.dry_run?'Dry-run: загрузки выключены':'Загрузки включены';
  byId('jobs').replaceChildren();
  if(!overview.jobs.length)byId('jobs').textContent='Заявок пока нет.';
@@ -477,10 +491,6 @@ async function refresh(){
    bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';body.append(bar);}
   card.onclick=()=>run(()=>inspect(job.id));byId('jobs').append(card);
  }
- renderSources(sources);show('profiles',profiles);show('metrics',metrics);
- if(config===null){config=await api('/admin/config');renderConfig();}
- renderKnownSources(sources,await api('/admin/indexers').catch(()=>[]));
- if(selected!==null)await inspect(selected);
 }
 async function run(action){
  if(busy)return;busy=true;byId('logout').disabled=true;byId('status').textContent='Загрузка…';
@@ -504,7 +514,12 @@ byId('config-form').onsubmit=event=>{event.preventDefault();run(async()=>{
 });};
 byId('logout').onclick=()=>{clearSession();byId('login').hidden=false;
  byId('status').textContent='Ключ забыт. Сессия Seerr завершается выходом в Seerr.';};
-setInterval(()=>{if(signedIn&&!busy&&byId('dashboard').hidden===false)run(refresh);},15000);
+let lastFull=Date.now();
+setInterval(()=>{
+ if(!signedIn||busy||byId('dashboard').hidden!==false)return;
+ if(Date.now()-lastFull>=15000){lastFull=Date.now();run(refresh);}
+ else if(searching)run(quickRefresh);
+},3000);
 for(const action of ['retry','cancel'])byId(action).onclick=()=>run(async()=>{
  if(selected===null)return;
  if(!confirm(action==='cancel'?'Отменить это задание? Закачка в qBittorrent будет удалена; уже импортированные файлы останутся.':'Повторить обработку этого задания?'))return;

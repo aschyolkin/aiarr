@@ -397,3 +397,21 @@ def test_torrent_metadata_reports_file_sizes():
                                       b"pieces": b"0" * 20}})
     assert torrent_metadata(raw, with_sizes=True)[2] == [("Movie.mkv", 5)]
     assert torrent_metadata(raw)[2] == ["Movie.mkv"]
+
+
+def test_search_progress_is_visible_before_search_finishes(settings, db, movie):
+    provider = _provider("first", "second")
+    job_id = db.submit(movie)
+    seen = []
+    details = provider.fetch_details.return_value
+
+    def fetch(release):
+        decision = json.loads(db.job(job_id)["decision"] or "{}")
+        seen.append((decision.get("partial"), [c["release"]["release_id"] for c in decision.get("candidates", [])]))
+        return details
+
+    provider.fetch_details.side_effect = fetch
+    Worker(settings, db, [provider], Mock()).tick()
+
+    assert seen[1] == (True, ["first"])
+    assert "partial" not in json.loads(db.job(job_id)["decision"])

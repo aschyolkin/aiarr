@@ -440,6 +440,13 @@ class Database:
                     {"job": job_id, "tag": tag_id},
                 )
 
+    def save_partial_decision(self, job_id, decision):
+        """Expose search progress without a state change or journal event."""
+        self.execute(
+            "UPDATE jobs SET decision=:decision WHERE id=:id AND state IN ('SEARCHING','ENRICHING')",
+            id=job_id, decision=decision,
+        )
+
     def transition(self, job_id, state, reason=None, delay=0, **updates):
         allowed = {
             "attempts", "candidate", "torrent_hash", "reserved", "decision", "dry_run",

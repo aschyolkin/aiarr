@@ -286,6 +286,16 @@ class Worker:
         )}
         skipped_stalled = False
         eligible = []
+        published = 0.0
+
+        def publish_progress(force=False):
+            nonlocal published
+            if force or time.monotonic() - published >= 1:
+                published = time.monotonic()
+                self.db.save_partial_decision(job["id"], json.dumps({
+                    "policy": self.settings.policy.model_dump(), "candidates": decisions,
+                    "errors": errors, "partial": True,
+                }))
         for provider in self.providers:
             stage = "SEARCHING"
             try:
@@ -319,6 +329,7 @@ class Worker:
                             candidate.claims.extend(interpretation.claims)
                             candidate.unknown.append("llm_interpretation_requires_review")
                     decisions.append(candidate.model_dump())
+                    publish_progress()
                     if candidate.reasons or candidate.unknown:
                         continue
                     rank = sum(candidate.score.values())
@@ -334,6 +345,7 @@ class Worker:
                         "retry_after": exc.retry_after,
                     }
                 )
+            publish_progress(force=True)
         decision = json.dumps(
             {"policy": self.settings.policy.model_dump(), "candidates": decisions, "errors": errors}
         )
