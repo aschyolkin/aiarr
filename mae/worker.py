@@ -578,13 +578,21 @@ class Worker:
     def preferred_resolution(self, parsed):
         return str((parsed or {}).get("screen_size", "")) in {f"{n}p" for n in self.settings.policy.resolutions}
 
-    def alternatives(self, job):
+    def too_long(self, info, elapsed):
+        """Both the current and the average rate exceed max_eta_seconds, to ignore short dips."""
+        average = int(info.get("downloaded") or 0) / elapsed
+        left = int(info.get("amount_left") or 0)
+        eta_average = left / average if average else float("inf")
+        return min(eta_average, int(info.get("eta") or 0)) > self.settings.max_eta_seconds
+
+    def alternatives(self, job, allow_downgrade=False):
         """Acceptable releases from the last search that were not tried yet.
 
-        A lower fallback resolution never replaces a preferred one that downloads.
+        A lower fallback resolution replaces a preferred one that downloads only
+        when that download would take longer than max_eta_seconds.
         """
         current = json.loads(job["candidate"] or "{}").get("parsed")
-        need_preferred = self.preferred_resolution(current)
+        need_preferred = self.preferred_resolution(current) and not allow_downgrade
         skip = {(row["provider"], row["release_id"]) for row in self.db.execute(
             "SELECT provider,release_id FROM stalled_releases WHERE job_id=:id", id=job["id"]
         )}
@@ -634,10 +642,13 @@ class Worker:
         backup = self.downloader.info(job["backup_hash"])
         backup_moving = bool(backup and int(backup.get("downloaded") or 0))
         # The backup is speed-limited, so its seeders, not its speed, show its promise.
+        too_long = moving and self.too_long(info, elapsed)
         downgrade = self.preferred_resolution(
             json.loads(job["candidate"] or "{}").get("parsed")
         ) and not self.preferred_resolution(json.loads(job["backup_candidate"] or "{}").get("parsed"))
-        if backup_moving and (not moving or (self.seeds(backup) > self.seeds(info) and not downgrade)):
+        if backup_moving and (
+            not moving or (self.seeds(backup) > self.seeds(info) and (not downgrade or too_long))
+        ):
             self.downloader.set_download_limit(job["backup_hash"], -1)
             self.queue_discard(job["id"], job["torrent_hash"], job["candidate"], slow=moving)
             self.db.transition(
@@ -647,7 +658,7 @@ class Worker:
                 backup_hash=None, backup_candidate=None, backup_reserved=0,
                 download_started=time.time(),
             )
-        elif (moving or backup_moving) and not self.alternatives(job):
+        elif (moving or backup_moving) and not self.alternatives(job, allow_downgrade=too_long):
             # A slow download beats none when nothing else is left to try.
             self.queue_discard(job["id"], job["backup_hash"], job["backup_candidate"], slow=backup_moving)
             self.db.transition(
@@ -665,12 +676,7 @@ class Worker:
         """Replace a download that would take longer than max_eta_seconds."""
         if elapsed < 2 * self.settings.stall_seconds or float(info.get("progress") or 0) >= 0.5:
             return False
-        average = int(info.get("downloaded") or 0) / elapsed
-        left = int(info.get("amount_left") or 0)
-        eta_average = left / average if average else float("inf")
-        eta_now = int(info.get("eta") or 0)
-        # Both the current and the average rate must be too slow, to ignore short dips.
-        if min(eta_average, eta_now) <= self.settings.max_eta_seconds or not self.alternatives(job):
+        if not self.too_long(info, elapsed) or not self.alternatives(job, allow_downgrade=True):
             return False
         self.switch_release(job, "DOWNLOAD_TOO_SLOW", primary_moving=True)
         return True

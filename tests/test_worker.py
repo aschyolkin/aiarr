@@ -576,10 +576,24 @@ def test_dead_1080p_is_replaced_by_720p(settings, db, movie):
     assert (db.job(job_id)["reason"], db.job(job_id)["torrent_hash"]) == ("BACKUP_PROMOTED", _h("second"))
 
 
-def test_slow_1080p_eta_check_ignores_720p_alternatives(settings, db, movie):
+def test_1080p_over_eta_limit_is_replaced_by_720p(settings, db, movie):
     job_id = db.submit(movie)
     db.transition(job_id, "DOWNLOADING", torrent_hash=_h("first"), candidate=json.dumps(_res("first", "1080p")),
                   decision=json.dumps({"candidates": [_res("first", "1080p"), _res("second", "720p")]}))
     slow = _torrent(added_on=time.time() - 3600, downloaded=10**6, amount_left=10**11, eta=10**6, progress=0.01)
     Worker(settings, db, [], _downloader({_h("first"): slow})).tick()
-    assert db.job(job_id)["state"] == "DOWNLOADING"
+    assert db.job(job_id)["reason"] == "DOWNLOAD_TOO_SLOW"
+
+
+def test_720p_backup_replaces_1080p_that_would_take_too_long(settings, db, movie):
+    job_id = db.submit(movie)
+    db.transition(
+        job_id, "DOWNLOADING", torrent_hash=_h("first"), backup_hash=_h("second"),
+        candidate=json.dumps(_res("first", "1080p")), backup_candidate=json.dumps(_res("second", "720p")),
+    )
+    downloader = _downloader({
+        _h("first"): _torrent(downloaded=1000, num_seeds=1, num_complete=1, amount_left=10**11, eta=10**6),
+        _h("second"): _torrent(downloaded=1, num_seeds=40),
+    })
+    Worker(settings, db, [], downloader).tick()
+    assert (db.job(job_id)["reason"], db.job(job_id)["torrent_hash"]) == ("BACKUP_PROMOTED", _h("second"))
