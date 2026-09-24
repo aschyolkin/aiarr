@@ -12,7 +12,7 @@ from mae.parsing import STUDIOS
 from mae.security import clean_text
 
 MODEL = "deepseek-flash"
-CACHE_VERSION = "prompt2/schema1/deepseek-v4.1-flash-20260910"
+CACHE_VERSION = "prompt3/schema1/deepseek-v4.1-flash-20260910"
 CLAIM_VALUES = {
     "audio_language": ["rus", "eng", "fra", "deu", "spa", "jpn", "kor", "zho"],
     "studio": sorted(STUDIOS),
@@ -94,6 +94,9 @@ class DeepSeek:
              + " Use these exact codes, e.g. Russian audio -> rus; "
              "do not translate or alter the evidence quote. "
              "Claims require exact evidence quotes. Subtitle languages are not audio. "
+             "Evidence comes from Russian torrent trackers: there the translation "
+             "markers Dub, Дубляж, MVO, DVO, AVO, VO and their variants (e.g. 2x MVO) "
+             "denote a Russian audio track; quote the marker. "
              "Use unknown when absent; list contradictions. No tools or actions."},
             {"role": "user", "content": payload},
         ]
@@ -117,6 +120,7 @@ class DeepSeek:
                             "thinking": {"type": "disabled"},
                             "response_format": {"type": "json_object"},
                             "max_tokens": 1200,
+                            "temperature": 0,
                             "messages": messages,
                         },
                     )
