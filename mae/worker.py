@@ -411,16 +411,18 @@ class Worker:
             self.start_backup(job, work, ranked[1], torrent_hash, committed)
 
     def download_preference(self, item, slow_keys=frozenset()):
-        """Enough seeders first (unknown in between), then policy score, then seeders.
+        """Preferred resolution, then enough seeders (unknown in between), score, seeders.
 
         Releases already found too slow are only a last resort.
         """
         rank, candidate, _ = item
+        resolution = str(candidate.parsed.get("screen_size", ""))
+        preferred = resolution in {f"{n}p" for n in self.settings.policy.resolutions}
         seeders = candidate.release.seeders
         tier = 1 if seeders is None else 2 if seeders >= self.settings.min_seeders else 0
         if (candidate.release.provider, candidate.release.release_id) in slow_keys:
             tier = -1
-        return tier, rank, seeders or 0
+        return preferred, tier, rank, seeders or 0
 
     def prepare_torrent(self, provider, candidate, work):
         handle = provider.resolve_download(candidate.release)

@@ -516,3 +516,29 @@ def test_slow_releases_are_last_resort_and_never_forgotten(settings, db, movie):
     assert json.loads(job["candidate"])["release"]["release_id"] == "first"
     rows = db.execute("SELECT release_id,slow FROM stalled_releases WHERE job_id=:id", id=job_id)
     assert [(r["release_id"], r["slow"]) for r in rows] == [("first", 1), ("second", 0)]
+
+
+
+def test_lower_resolution_is_chosen_only_without_preferred_one(settings, db, movie):
+    provider = _provider("hd", "fullhd")
+    provider.search.return_value[0].title = "Example.2024.720p.WEB-DL.H.264"
+    provider.search.return_value[0].seeders = 50
+    provider.search.return_value[1].seeders = 2
+    job_id = db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    assert json.loads(db.job(job_id)["candidate"])["release"]["release_id"] == "fullhd"
+
+    only_hd = _provider("hd")
+    only_hd.search.return_value[0].title = "Example.2024.720p.WEB-DL.H.264"
+    other = db.submit(Work(kind="movie", external_id=2, title="Example", year=2024))
+    Worker(settings, db, [only_hd], Mock()).tick()
+    assert json.loads(db.job(other)["candidate"])["release"]["release_id"] == "hd"
+
+
+def test_lower_resolution_is_rejected_when_fallback_is_disabled(settings, db, movie):
+    settings = settings.model_copy(update={"policy": settings.policy.model_copy(update={"fallback_resolutions": []})})
+    provider = _provider("hd")
+    provider.search.return_value[0].title = "Example.2024.720p.WEB-DL.H.264"
+    job_id = db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    assert db.job(job_id)["reason"] == "NO_PROVEN_CANDIDATE"

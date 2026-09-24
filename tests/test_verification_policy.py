@@ -43,7 +43,19 @@ def test_excessive_crop_is_still_below_policy():
         {"codec_type": "audio", "tags": {"language": "rus"}},
     ]}
     with pytest.raises(ValueError, match="VIDEO_RESOLUTION_BELOW_POLICY"):
+        verify(data, Policy(fallback_resolutions=[]), {"screen_size": "1080p", "video_codec": "H.264"})
+    with pytest.raises(ValueError, match="VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE"):
         verify(data, Policy(), {"screen_size": "1080p", "video_codec": "H.264"})
+
+
+def test_fallback_720p_file_is_accepted_only_when_allowed():
+    data = {"format": {"duration": "3600"}, "streams": [
+        {"codec_type": "video", "codec_name": "h264", "width": 1280, "height": 536},
+        {"codec_type": "audio", "tags": {"language": "rus"}},
+    ]}
+    verify(data, Policy(), {"screen_size": "720p", "video_codec": "H.264"})
+    with pytest.raises(ValueError, match="VIDEO_RESOLUTION_BELOW_POLICY"):
+        verify(data, Policy(fallback_resolutions=[]), {"screen_size": "720p", "video_codec": "H.264"})
 
 
 def test_new_episode_reopens_completed_series(db):

@@ -79,6 +79,8 @@ class Policy(BaseModel):
     max_bytes: int = Field(default=60 * 1024**3, gt=0)
     max_file_bytes: int = Field(default=20 * 1024**3, gt=0)
     resolutions: list[int] = [2160, 1080]
+    # Accepted only when no release in a preferred resolution qualifies.
+    fallback_resolutions: list[int] = [720]
     codecs: list[str] = ["H.265", "H.264"]
     source_weights: dict[str, int] = {"Web": 40, "Blu-ray": 40}
     # Only explicitly bad sources are rejected; an unrecognized/unlabeled

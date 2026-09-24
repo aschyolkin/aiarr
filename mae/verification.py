@@ -69,9 +69,10 @@ def verify(data, policy, expected=None):
         width = video.get("width", 0)
         # Cinematic releases may crop a few edge pixels and letterbox height.
         resolution = 2160 if width >= 3800 and video.get("height", 0) >= 1560 else (
-            1080 if width >= 1900 and video.get("height", 0) >= 780 else None
+            1080 if width >= 1900 and video.get("height", 0) >= 780 else
+            720 if width >= 1260 and video.get("height", 0) >= 500 else None
         )
-        if resolution not in policy.resolutions:
+        if resolution not in [*policy.resolutions, *policy.fallback_resolutions]:
             raise ValueError("VIDEO_RESOLUTION_BELOW_POLICY")
         if expected and expected.get("screen_size") != f"{resolution}p":
             raise ValueError("VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE")

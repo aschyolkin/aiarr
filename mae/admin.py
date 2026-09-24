@@ -87,6 +87,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <label class="field">Максимальный размер, ГиБ<input id="policy-size" type="number" min="1" step="1" required></label>
 <label class="field">Максимальный размер файла, ГиБ<input id="policy-file-size" type="number" min="1" step="1" required></label>
 <label class="field">Разрешения<select id="policy-resolution" multiple size="2"><option value="2160">2160p</option><option value="1080">1080p</option></select></label>
+<label class="field">Если нет подходящих — допускать<select id="policy-fallback-resolution" multiple size="2"><option value="720">720p</option></select></label>
 <label class="field">Видеокодеки<select id="policy-codecs" multiple size="2"><option value="H.265">H.265</option><option value="H.264">H.264</option></select></label>
 <label class="field"><span>Русская аудиодорожка обязательна</span><input id="policy-russian" type="checkbox"></label>
 </div><label class="field">Приоритеты источников (JSON)<textarea id="policy-sources"></textarea></label>
@@ -183,6 +184,7 @@ function renderConfig(){
  byId('policy-version').value=p.version;byId('policy-size').value=Math.round(p.max_bytes/1073741824);
  byId('policy-file-size').value=Math.round(p.max_file_bytes/1073741824);
  for(const option of byId('policy-resolution').options)option.selected=p.resolutions.includes(Number(option.value));
+ for(const option of byId('policy-fallback-resolution').options)option.selected=(p.fallback_resolutions||[]).includes(Number(option.value));
  for(const option of byId('policy-codecs').options)option.selected=p.codecs.includes(option.value);
  byId('policy-russian').checked=p.russian_required;
  byId('policy-sources').value=JSON.stringify(p.source_weights,null,2);
@@ -208,7 +210,8 @@ function collectConfig(){
  const policy={...previous.policy,version:byId('policy-version').value.trim(),
   max_bytes:Number(byId('policy-size').value)*1073741824,
   max_file_bytes:Number(byId('policy-file-size').value)*1073741824,
-  resolutions:selectedValues('policy-resolution').map(Number),codecs:selectedValues('policy-codecs'),
+  resolutions:selectedValues('policy-resolution').map(Number),
+  fallback_resolutions:selectedValues('policy-fallback-resolution').map(Number),codecs:selectedValues('policy-codecs'),
   russian_required:byId('policy-russian').checked,
   source_weights:JSON.parse(byId('policy-sources').value),
   denied_sources:JSON.parse(byId('policy-denied-sources').value),

@@ -29,7 +29,7 @@ def evaluate(candidate, work, policy):
     if source in policy.denied_sources:
         c.reasons.append("SOURCE_NOT_ALLOWED")
     resolution = str(p.get("screen_size", ""))
-    if resolution not in [f"{n}p" for n in policy.resolutions]:
+    if resolution not in [f"{n}p" for n in [*policy.resolutions, *policy.fallback_resolutions]]:
         c.reasons.append("RESOLUTION_NOT_ALLOWED")
     if p.get("video_codec") not in policy.codecs:
         c.unknown.append("compatible_video_codec")
@@ -50,7 +50,7 @@ def evaluate(candidate, work, policy):
         return c
     c.score = {
         "source": policy.source_weights.get(source, 0),
-        "resolution": 30 if resolution == "2160p" else 10,
+        "resolution": 30 if resolution == "2160p" else 10 if resolution == "1080p" else 0,
         "codec": 10 if p.get("video_codec") == "H.265" else 0,
     }
     studios = {cl.value for cl in c.claims if cl.field == "studio"}
