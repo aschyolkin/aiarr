@@ -542,3 +542,44 @@ def test_lower_resolution_is_rejected_when_fallback_is_disabled(settings, db, mo
     job_id = db.submit(movie)
     Worker(settings, db, [provider], Mock()).tick()
     assert db.job(job_id)["reason"] == "NO_PROVEN_CANDIDATE"
+
+
+
+def _res(release_id, resolution):
+    return {"release": {"provider": "fixture", "release_id": release_id}, "parsed": {"screen_size": resolution},
+            "reasons": [], "unknown": []}
+
+
+def test_moving_1080p_is_not_replaced_by_720p(settings, db, movie):
+    job_id = db.submit(movie)
+    db.transition(
+        job_id, "DOWNLOADING", torrent_hash=_h("first"), backup_hash=_h("second"),
+        candidate=json.dumps(_res("first", "1080p")), backup_candidate=json.dumps(_res("second", "720p")),
+        decision=json.dumps({"candidates": [_res("first", "1080p"), _res("second", "720p"), _res("third", "720p")]}),
+    )
+    downloader = _downloader({_h("first"): _torrent(downloaded=1000, num_seeds=1, num_complete=1),
+                              _h("second"): _torrent(downloaded=1, num_seeds=40)})
+    Worker(settings, db, [], downloader).tick()
+    job = db.job(job_id)
+    assert (job["reason"], job["torrent_hash"], job["backup_hash"]) == (
+        "DOWNLOAD_SLOW_NO_ALTERNATIVE", _h("first"), None)
+
+
+def test_dead_1080p_is_replaced_by_720p(settings, db, movie):
+    job_id = db.submit(movie)
+    db.transition(
+        job_id, "DOWNLOADING", torrent_hash=_h("first"), backup_hash=_h("second"),
+        candidate=json.dumps(_res("first", "1080p")), backup_candidate=json.dumps(_res("second", "720p")),
+    )
+    downloader = _downloader({_h("first"): _torrent(), _h("second"): _torrent(downloaded=1)})
+    Worker(settings, db, [], downloader).tick()
+    assert (db.job(job_id)["reason"], db.job(job_id)["torrent_hash"]) == ("BACKUP_PROMOTED", _h("second"))
+
+
+def test_slow_1080p_eta_check_ignores_720p_alternatives(settings, db, movie):
+    job_id = db.submit(movie)
+    db.transition(job_id, "DOWNLOADING", torrent_hash=_h("first"), candidate=json.dumps(_res("first", "1080p")),
+                  decision=json.dumps({"candidates": [_res("first", "1080p"), _res("second", "720p")]}))
+    slow = _torrent(added_on=time.time() - 3600, downloaded=10**6, amount_left=10**11, eta=10**6, progress=0.01)
+    Worker(settings, db, [], _downloader({_h("first"): slow})).tick()
+    assert db.job(job_id)["state"] == "DOWNLOADING"

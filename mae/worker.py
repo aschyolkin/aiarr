@@ -416,8 +416,7 @@ class Worker:
         Releases already found too slow are only a last resort.
         """
         rank, candidate, _ = item
-        resolution = str(candidate.parsed.get("screen_size", ""))
-        preferred = resolution in {f"{n}p" for n in self.settings.policy.resolutions}
+        preferred = self.preferred_resolution(candidate.parsed)
         seeders = candidate.release.seeders
         tier = 1 if seeders is None else 2 if seeders >= self.settings.min_seeders else 0
         if (candidate.release.provider, candidate.release.release_id) in slow_keys:
@@ -576,8 +575,16 @@ class Worker:
             and int(info.get("downloaded") or 0) / elapsed >= self.settings.min_download_speed
         )
 
+    def preferred_resolution(self, parsed):
+        return str((parsed or {}).get("screen_size", "")) in {f"{n}p" for n in self.settings.policy.resolutions}
+
     def alternatives(self, job):
-        """Acceptable releases from the last search that were not tried yet."""
+        """Acceptable releases from the last search that were not tried yet.
+
+        A lower fallback resolution never replaces a preferred one that downloads.
+        """
+        current = json.loads(job["candidate"] or "{}").get("parsed")
+        need_preferred = self.preferred_resolution(current)
         skip = {(row["provider"], row["release_id"]) for row in self.db.execute(
             "SELECT provider,release_id FROM stalled_releases WHERE job_id=:id", id=job["id"]
         )}
@@ -586,6 +593,7 @@ class Worker:
             skip.add((release.get("provider"), release.get("release_id")))
         return any(
             not c.get("reasons") and not c.get("unknown")
+            and (not need_preferred or self.preferred_resolution(c.get("parsed")))
             and ((c.get("release") or {}).get("provider"), (c.get("release") or {}).get("release_id")) not in skip
             for c in json.loads(job["decision"] or "{}").get("candidates", [])
         )
@@ -626,7 +634,10 @@ class Worker:
         backup = self.downloader.info(job["backup_hash"])
         backup_moving = bool(backup and int(backup.get("downloaded") or 0))
         # The backup is speed-limited, so its seeders, not its speed, show its promise.
-        if backup_moving and (not moving or self.seeds(backup) > self.seeds(info)):
+        downgrade = self.preferred_resolution(
+            json.loads(job["candidate"] or "{}").get("parsed")
+        ) and not self.preferred_resolution(json.loads(job["backup_candidate"] or "{}").get("parsed"))
+        if backup_moving and (not moving or (self.seeds(backup) > self.seeds(info) and not downgrade)):
             self.downloader.set_download_limit(job["backup_hash"], -1)
             self.queue_discard(job["id"], job["torrent_hash"], job["candidate"], slow=moving)
             self.db.transition(
