@@ -61,3 +61,15 @@ def test_existing_series_folder_uses_verified_provider_id(settings, tmp_path, re
     ]}))
     with pytest.raises(ValueError, match="LIBRARY_SERIES_PATH_UNSAFE"):
         Jellyfin(settings).existing_series_folder(work)
+
+
+def test_token_is_sent_in_mediabrowser_authorization_header(settings, movie, respx_mock):
+    # Jellyfin 12 rejects X-Emby-Token with 401; this header works on old and new servers.
+    settings = settings.model_copy(update={"jellyfin_key": settings.api_key})
+    route = respx_mock.get(settings.jellyfin_url + "/Items").mock(
+        return_value=httpx.Response(200, json={"Items": []})
+    )
+    Jellyfin(settings).coverage(movie)
+    sent = route.calls.last.request.headers
+    assert sent["Authorization"] == f'MediaBrowser Token="{settings.api_key.get_secret_value()}"'
+    assert "x-emby-token" not in sent

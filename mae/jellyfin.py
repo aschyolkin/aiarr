@@ -15,7 +15,7 @@ class Jellyfin:
             raise ValueError("JELLYFIN_KEY_REQUIRED")
         return httpx.Client(
             base_url=self.settings.jellyfin_url,
-            headers={"X-Emby-Token": key},
+            headers={"Authorization": f'MediaBrowser Token="{key}"'},  # X-Emby-Token is rejected since Jellyfin 12
             timeout=20,
             trust_env=False,
             follow_redirects=False,
