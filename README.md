@@ -13,9 +13,9 @@ per-file ffprobe checks, journaled hardlink import and Jellyfin discovery check.
 Default dry-run makes no downloads or library modifications. Unknown mandatory
 properties and LLM-only interpretations wait for review.
 
-## Текущий статус — 2026-09-23
+## Текущий статус — 2026-11-07
 
-В TrueNAS работает production-образ `media-acquisition-engine:e473406`
+В TrueNAS работает production-образ `media-acquisition-engine:5c7754b`
 с `MAE_DRY_RUN=false`. Seerr направляет новые фильмы и сериалы в aiarr;
 Radarr и Sonarr удалены после успешной проверки реального скачивания и
 импорта. В qBittorrent сейчас выполняются реальные загрузки, поэтому обновление
