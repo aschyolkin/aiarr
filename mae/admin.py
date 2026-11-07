@@ -33,6 +33,10 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 .card{display:flex;gap:.8rem;align-items:flex-start}.card .body{flex:1;min-width:0}
 .poster{width:72px;height:108px;flex:none;border-radius:.4rem;background:#374151 center/cover no-repeat;display:flex;align-items:center;justify-content:center;font-size:1.6rem;color:#6b7280}
 .login{display:flex;flex-wrap:wrap;gap:.25rem;align-items:center}.login input{width:9rem}
+.notice{padding:.8rem 1rem;border-radius:.5rem;background:#1e3a8a55;border:1px solid #3b82f6;margin:.8rem 0}
+.notice.warn{background:#92400e44;border-color:#d97706}.cand button{margin:.3rem 0 0;padding:.3rem .6rem;font-size:.85rem}
+.weights td{padding:.3rem}.weights input{width:5rem}.stat-ok{color:#6ee7b7}.stat-bad{color:#fca5a5}
+#header-info{display:flex;flex-wrap:wrap;gap:.4rem 1rem}
 </style>
 <h1>aiarr</h1><p>Очередь, доказательства выбора и диагностика импорта</p>
 <div id="login" hidden><p>Войдите в Seerr под администратором в этом браузере и обновите страницу.</p>
@@ -40,7 +44,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <label>API-ключ <input id="key" type="password" autocomplete="off" required></label><button>Войти</button></form></details></div>
 <p id="status" role="status"></p>
 <main id="dashboard" hidden>
-<nav class="top"><span id="mode" class="muted"></span><span class="spacer"></span>
+<nav class="top"><span id="header-info" class="muted"><span id="mode"></span><span id="disk"></span><span id="speed"></span></span><span class="spacer"></span>
 <a href="#jobs" data-page="jobs">Заявки</a><a href="#sources" data-page="sources">Источники</a>
 <a href="#settings" data-page="settings">⚙ Настройки</a>
 <button id="refresh" type="button">Обновить</button><button id="logout" type="button">Выйти</button></nav>
@@ -50,13 +54,16 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <p id="job-summary" class="summary"></p><div id="download-panel" hidden>
 <label for="download-progress">Загрузка: <span id="download-text"></span></label>
 <progress id="download-progress" class="progress" max="100" value="0"></progress></div>
+<div id="upgrade-panel" class="notice" hidden><span id="upgrade-text"></span>
+<div><button id="upgrade-apply" type="button">Заменить на этот релиз</button><button id="upgrade-abort" type="button">Отменить замену</button></div></div>
 <h3>Ход заказа</h3><ol id="timeline" class="timeline"></ol>
 <div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
 <button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
 <p class="hint">Отмена в aiarr и пропажа файла из Jellyfin удаляют закачку из qBittorrent (уже добавленные в библиотеку файлы не трогаются — это отдельная жёсткая ссылка). Удаление заявки в Seerr удаляет ещё и файлы этой заявки, после проверки владельца.</p>
 <details open><summary>Кандидаты и причины выбора</summary><p id="cand-summary" class="hint"></p>
 <section><table class="cand"><thead><tr><th></th><th>Релиз</th><th>Источник</th><th>Качество</th><th>Кодек</th><th>Размер</th>
-<th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section></details>
+<th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section>
+<p class="hint">Кнопка «Скачать этот» выбирает релиз вручную, даже если aiarr сомневается в названии, годе или озвучке. Скачанный файл всё равно проверяется ffprobe по профилю качества (кодек, разрешение, русская дорожка). Для готового фильма выбранный релиз заменит файл в библиотеке только после проверки.</p></details>
 <details><summary>Технические подробности</summary>
 <details><summary>Кандидаты, evidence и причины выбора (JSON)</summary><pre id="decision"></pre></details>
 <details><summary>Выбранный релиз</summary><pre id="candidate"></pre></details>
@@ -68,6 +75,10 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <form id="config-form">
 <section id="page-sources" class="page" hidden><h2>Источники поиска</h2>
 <p id="sources-summary" class="hint"></p>
+<h3>Здоровье источников за 7 дней</h3>
+<section><table class="cand"><thead><tr><th>Источник</th><th>Поисков</th><th>Ответ поиска</th><th>Карточек</th><th>Ответ карточки</th>
+<th>Ошибки</th><th>Последний поиск</th><th>Подходящих / выбрано</th></tr></thead><tbody id="provider-health"></tbody></table></section>
+<p class="hint">«Подходящих» — сколько релизов этого источника прошли все проверки в текущих заявках; «выбрано» — сколько из них скачано.</p>
 <h3>Трекеры и студии</h3>
 <section><table class="cand"><thead><tr><th>Источник</th><th>Как ищем</th><th>Состояние</th><th>Вход</th></tr></thead>
 <tbody id="known-sources"></tbody></table></section>
@@ -93,7 +104,26 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 </div><label class="field">Приоритеты источников (JSON)<textarea id="policy-sources"></textarea></label>
 <p class="hint">Источник без явной метки CAM/TS/TC (например «Hybrid» или вообще без пометки) принимается к рассмотрению, а не отбрасывается. Отбрасываются только явные экранки и телесинк/телесине.</p>
 <label class="field">Запрещённые источники (JSON-список)<textarea id="policy-denied-sources"></textarea></label>
-<label class="field">Приоритеты студий (JSON)<textarea id="policy-studios"></textarea></label></fieldset>
+<h4>Приоритеты озвучки</h4><p class="hint">Баллы прибавляются к оценке релиза: при прочих равных выбирается озвучка с бо́льшим весом. Для сравнения: 2160p даёт +30, 1080p +10, H.265 +10, WEB/Blu-ray +40.</p>
+<div class="grid"><table class="weights"><thead><tr><th>Тип перевода</th><th>Баллы</th></tr></thead><tbody id="voice-weights"></tbody></table>
+<table class="weights"><thead><tr><th>Студия</th><th>Баллы</th></tr></thead><tbody id="studio-weights"></tbody></table></div>
+<div class="login"><input id="new-studio" placeholder="другая студия"><button id="add-studio" type="button">Добавить студию</button></div>
+<p class="hint">Студия распознаётся в названии раздачи и в строках «Аудио»/«Перевод» описания.</p></fieldset>
+<fieldset><legend>Улучшение качества</legend><div class="grid">
+<label class="field">Искать релиз лучше для готовых фильмов, раз в N часов (0 — не искать)<input id="upgrade_check_hours" type="number" min="0" max="2160"></label>
+<label class="field"><span>Заменять автоматически</span><input id="auto_upgrade" type="checkbox"></label></div>
+<p class="hint">«Лучше» — выше разрешение из основного списка или на 10+ баллов выше оценка (например, дубляж вместо многоголосой). Без автозамены найденный релиз показывается в карточке фильма с кнопкой «Заменить».</p></fieldset>
+<fieldset><legend>Скорость qBittorrent по расписанию</legend><div class="grid">
+<label class="field"><span>Ограничивать скорость по расписанию</span><input id="speed_schedule_enabled" type="checkbox"></label>
+<label class="field">Ограничивать с, ч<input id="speed_limited_from_hour" type="number" min="0" max="23"></label>
+<label class="field">до, ч<input id="speed_limited_to_hour" type="number" min="0" max="23"></label>
+<label class="field">Загрузка в это время, МиБ/с<input id="speed_dl_mib" type="number" min="0.1" step="0.1"></label>
+<label class="field">Отдача в это время, МиБ/с<input id="speed_ul_mib" type="number" min="0.1" step="0.1"></label>
+<label class="field">Часовой пояс, UTC+<input id="utc_offset_hours" type="number" min="-12" max="14"></label></div>
+<p class="hint">Например, с 8 до 1 — днём и вечером торренты не забивают канал, ночью качают на полной скорости. Используется «альтернативный лимит» qBittorrent; встроенный планировщик qBittorrent aiarr отключает, чтобы они не спорили.</p></fieldset>
+<fieldset><legend>Чистка раздач</legend><div class="grid">
+<label class="field">Убирать из qBittorrent через N дней после загрузки (0 — не убирать)<input id="cleanup_after_days" type="number" min="0" max="3650"></label></div>
+<p class="hint">Файл в библиотеке — отдельная жёсткая ссылка и остаётся. Место на диске это почти не освобождает (данные общие), зато раздача больше не висит в списке. Убираются только торренты, все импортированные файлы которых на месте.</p></fieldset>
 <fieldset><legend>Подключения</legend><div class="grid">
 <label class="field">qBittorrent URL<input id="qbit_url" type="url"></label>
 <label class="field">qBittorrent пользователь<input id="qbit_username"></label>
@@ -136,7 +166,7 @@ function clearSession(){
  token='';signedIn=false;selected=null;config=null;byId('key').value='';byId('dashboard').hidden=true;
  byId('inspection').hidden=true;byId('login').hidden=false;
  byId('provider-list').replaceChildren();byId('config-form').reset();
- for(const id of ['jobs','sources','known-sources','profiles','metrics','decision','candidate','history','mode','job-title'])byId(id).textContent='';
+ for(const id of ['jobs','sources','known-sources','profiles','metrics','decision','candidate','history','mode','disk','speed','job-title','provider-health'])byId(id).textContent='';
 }
 async function api(path,method='GET',body=null){
  const headers={'X-Aiarr-UI':'1'};if(token)headers['X-Api-Key']=token;
@@ -179,6 +209,21 @@ function addProvider(value={}){
  const remove=document.createElement('button');remove.type='button';remove.textContent='Удалить источник';
  remove.onclick=()=>fieldset.remove();fieldset.append(remove);byId('provider-list').append(fieldset);
 }
+const VOICES={Dub:'Дубляж',MVO:'Многоголосый (MVO)',DVO:'Двухголосый (DVO)',AVO:'Авторский (AVO)',VO:'Одноголосый / любительский'};
+function weightRow(body,key,label,value){
+ const tr=document.createElement('tr'),name=document.createElement('td'),cell=document.createElement('td'),input=document.createElement('input');
+ name.textContent=label;input.type='number';input.min='-100';input.max='100';input.value=value??0;input.dataset.key=key;
+ cell.append(input);tr.append(name,cell);body.append(tr);
+}
+function renderWeights(p){
+ const voices=byId('voice-weights');voices.replaceChildren();
+ for(const [key,label] of Object.entries(VOICES))weightRow(voices,key,label,(p.voice_weights||{})[key]);
+ const studios=byId('studio-weights');studios.replaceChildren();
+ const names=[...new Set([...(config.known_studios||[]),...Object.keys(p.studio_weights||{})])];
+ for(const name of names)weightRow(studios,name,name,(p.studio_weights||{})[name]);
+}
+function readWeights(id){const out={};for(const input of byId(id).querySelectorAll('input[data-key]'))
+ out[input.dataset.key]=Math.round(Number(input.value)||0);return out;}
 function renderConfig(){
  const s=config.settings,p=s.policy;
  byId('policy-version').value=p.version;byId('policy-size').value=Math.round(p.max_bytes/1073741824);
@@ -189,7 +234,7 @@ function renderConfig(){
  byId('policy-russian').checked=p.russian_required;
  byId('policy-sources').value=JSON.stringify(p.source_weights,null,2);
  byId('policy-denied-sources').value=JSON.stringify(p.denied_sources,null,2);
- byId('policy-studios').value=JSON.stringify(p.studio_weights,null,2);
+ renderWeights(p);
  byId('provider-list').replaceChildren();for(const provider of s.providers)addProvider(provider);
  for(const key of ['qbit_url','qbit_username','jellyfin_url','seerr_url','deepseek_model',
   'max_downloads','max_attempts','enrichment_limit','deepseek_daily_calls','deepseek_daily_tokens',
@@ -199,6 +244,9 @@ function renderConfig(){
  byId('backup_kib').value=Math.round(s.backup_download_limit/1024);
  byId('min_seeders').value=s.min_seeders;
  byId('min_mbit').value=s.min_download_speed*8/1e6;byId('max_eta_hours').value=s.max_eta_seconds/3600;
+ for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days'])byId(key).value=s[key];
+ for(const key of ['auto_upgrade','speed_schedule_enabled'])byId(key).checked=Boolean(s[key]);
+ byId('speed_dl_mib').value=Math.round(s.speed_limit_download/104857.6)/10;byId('speed_ul_mib').value=Math.round(s.speed_limit_upload/104857.6)/10;
  for(const key of ['qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key']){
   byId(key).value='';byId(key).placeholder=s[key+'_configured']?'Сохранён':'Не задан';
  }
@@ -215,7 +263,7 @@ function collectConfig(){
   russian_required:byId('policy-russian').checked,
   source_weights:JSON.parse(byId('policy-sources').value),
   denied_sources:JSON.parse(byId('policy-denied-sources').value),
-  studio_weights:JSON.parse(byId('policy-studios').value)};
+  studio_weights:readWeights('studio-weights'),voice_weights:readWeights('voice-weights')};
  if(!policy.resolutions.length||!policy.codecs.length)throw new Error('Выберите разрешение и видеокодек.');
  const providers=[...byId('provider-list').children].map(box=>{
   const provider={};for(const input of box.querySelectorAll('[data-setting]')){
@@ -227,7 +275,11 @@ function collectConfig(){
   stall_seconds:Number(byId('stall_minutes').value)*60,
   backup_download_limit:Number(byId('backup_kib').value)*1024,min_seeders:Number(byId('min_seeders').value),
   min_download_speed:Math.round(Number(byId('min_mbit').value)*1e6/8),
-  max_eta_seconds:Math.round(Number(byId('max_eta_hours').value)*3600)};
+  max_eta_seconds:Math.round(Number(byId('max_eta_hours').value)*3600),
+  speed_limit_download:Math.round(Number(byId('speed_dl_mib').value)*1048576),
+  speed_limit_upload:Math.round(Number(byId('speed_ul_mib').value)*1048576)};
+ for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days'])values[key]=Number(byId(key).value);
+ for(const key of ['auto_upgrade','speed_schedule_enabled'])values[key]=byId(key).checked;
  for(const key of ['qbit_url','qbit_username','jellyfin_url','seerr_url','deepseek_model',
   'qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key'])values[key]=byId(key).value.trim();
  for(const key of ['max_downloads','max_attempts','enrichment_limit','deepseek_daily_calls',
@@ -257,7 +309,12 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  ADMIN_CANCELLED:'Отменено в aiarr',SEERR_REREQUESTED:'Запрошено повторно',
  PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
  LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
- NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
+ NO_MONITORED_EPISODES:'Нет отслеживаемых серий',NEXT_EPISODE_NOT_AIRED:'Следующая серия ещё не вышла',
+ MANUAL_RELEASE_CHOSEN:'Релиз выбран вручную',MANUAL_RELEASE_NOT_FOUND:'Выбранный релиз больше не находится в источнике',
+ MANUAL_RELEASE_SOURCE_GONE:'Источник выбранного релиза отключён',MANUAL_RELEASE_NOT_DOWNLOADABLE:'Выбранный релиз не пройдёт проверку',
+ UPGRADE_AVAILABLE:'Найден релиз лучше',UPGRADE_STARTED:'Идёт замена на релиз лучше',UPGRADE_CANCELLED:'Замена отменена, файл прежний',
+ UPGRADED:'Файл заменён на релиз лучше',SEEDING_CLEANED:'Раздача убрана из qBittorrent, файл в библиотеке остался',
+ VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE:'Разрешение файла не совпало с заявленным в раздаче',ALREADY_IN_LIBRARY:'Уже есть в Jellyfin'};
 const candidateReasons={NOT_VIDEO_RELEASE:'не видео (книга, музыка, игра)',VIDEO_CODEC_NOT_ALLOWED:'кодек не из списка',FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
  SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
@@ -275,6 +332,17 @@ function candidatePercent(c){
 }
 const sizeText=b=>typeof b==='number'?(b/1073741824).toFixed(b>=10737418240?0:1)+' ГиБ':'—';
 const scoreOf=c=>Object.values(c.score||{}).reduce((n,v)=>n+v,0);
+const SCORE_NAMES={source:'источник',resolution:'разрешение',codec:'кодек',studio:'студия',voice:'озвучка'};
+const scoreText=c=>Object.entries(c.score||{}).filter(([,v])=>v).map(([k,v])=>SCORE_NAMES[k]+' '+(v>0?'+':'')+v).join(', ');
+const UNCHOOSABLE=new Set(['TOO_LARGE','FILE_TOO_LARGE','VIDEO_CODEC_NOT_ALLOWED','NOT_VIDEO_RELEASE']);
+const choosable=c=>!(c.reasons||[]).some(x=>UNCHOOSABLE.has(x))&&!((c.reasons||[]).includes('RESOLUTION_NOT_ALLOWED')&&c.parsed?.screen_size);
+let currentJob=null;
+async function chooseRelease(c){
+ const r=c.release||{},replacing=currentJob&&(currentJob.state==='AVAILABLE'||currentJob.replacing);
+ if(!confirm((replacing?'Заменить файл в библиотеке на релиз':'Скачать релиз')+' «'+r.title+'»?'+
+  (replacing?' Старый файл останется, пока новый не пройдёт проверку.':' Текущая закачка этой заявки будет удалена.')))return;
+ await api('/admin/jobs/'+selected+'/choose','POST',{provider:r.provider,release_id:r.release_id});await refresh();
+}
 function renderCandidates(decision,chosen){
  const list=(decision?.candidates||[]).map(c=>({c,fit:!c.reasons?.length&&!c.unknown?.length,pct:candidatePercent(c)}));
  list.sort((a,b)=>(b.fit-a.fit)||(scoreOf(b.c)-scoreOf(a.c))||(b.pct-a.pct));
@@ -289,12 +357,14 @@ function renderCandidates(decision,chosen){
   const tr=document.createElement('tr');const isChosen=chosenId===r.provider+':'+r.release_id;
   tr.className=isChosen?'chosen':fit?'fit':'';
   const audio=[...new Set(claims.filter(x=>x.field==='audio_language').map(x=>x.value==='rus'?'русская':x.value))];
+  const voices=[...new Set(claims.filter(x=>x.field==='voice').map(x=>VOICES[x.value]||x.value))];
   const studios=[...new Set(claims.filter(x=>x.field==='studio').map(x=>x.value))];
   const codec=p.video_codec||claims.find(x=>x.field==='video_codec')?.value;
   const problems=[...(c.reasons||[]),...(c.unknown||[])].map(x=>candidateReasons[x]||x);
-  const verdict=isChosen?'✅ Выбран · '+scoreOf(c)+' баллов':fit?'✔ Подходит · '+scoreOf(c)+' баллов':'✖ '+problems.join('; ');
+  const why=scoreText(c);
+  const verdict=isChosen?'✅ Выбран · '+scoreOf(c)+' баллов'+(why?' ('+why+')':''):fit?'✔ Подходит · '+scoreOf(c)+' баллов'+(why?' ('+why+')':''):'✖ '+problems.join('; ');
   const cells=[r.title||'',r.provider||'',[p.screen_size,p.source].filter(Boolean).join(' · ')||'—',codec||'—',
-   sizeText(r.size),r.seeders??'—',[...audio,...studios].join(', ')||'—'];
+   sizeText(r.size),r.seeders??'—',[...audio,...voices,...studios].join(', ')||'—'];
   const pic=document.createElement('td');
   if(c.image_url&&/^https:/.test(c.image_url)){const img=document.createElement('img');img.src=c.image_url;
    img.alt='';img.loading='lazy';img.referrerPolicy='no-referrer';img.onerror=()=>img.remove();pic.append(img);}
@@ -306,6 +376,10 @@ function renderCandidates(decision,chosen){
    tr.append(td);});
   const td=document.createElement('td');const pctEl=document.createElement('div');pctEl.className='pct';
   pctEl.textContent=pct+'%';const note=document.createElement('div');note.textContent=verdict;td.append(pctEl,note);
+  if(!isChosen&&choosable(c)&&currentJob&&!['CANCELLED','VERIFYING','IMPORTING'].includes(currentJob.state)&&
+   !(currentJob.state==='AVAILABLE'&&parse(currentJob.work)?.kind==='series')){
+   const pick=document.createElement('button');pick.type='button';pick.textContent='Скачать этот';
+   pick.onclick=()=>run(()=>chooseRelease(c));td.append(pick);}
   tr.append(td);body.append(tr);
  }
 }
@@ -325,10 +399,15 @@ function renderProgress(data){
    .sort((a,b)=>Object.values(b.score||{}).reduce((n,v)=>n+v,0)-Object.values(a.score||{}).reduce((n,v)=>n+v,0))[0]);
  const episodes=data.episodes||[],wanted=episodes.filter(x=>x.monitored),ready=wanted.filter(x=>x.available),
   missing=wanted.filter(x=>!x.available);
+ const air=work.air_dates||{},today=new Date().toISOString().slice(0,10);
+ const upcoming=missing.filter(x=>air[x.episode]===''||air[x.episode]>today);
  let summary=labelState(job.state);
  if(work.kind==='series'&&wanted.length)summary+=' · готово '+ready.length+' из '+wanted.length+' серий'+
   (missing.length?' · ожидаются '+missing.map(x=>x.episode).join(', '):'');
  if(job.reason)summary+=' · '+labelReason(job.reason);
+ if(['RETRY_SCHEDULED','WAITING_FOR_RELEASE'].includes(job.state)&&job.next_run*1000>Date.now())
+  summary+=' · следующая попытка '+new Date(job.next_run*1000).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+ if(job.attempts)summary+=' · попыток: '+job.attempts;
  byId('job-summary').textContent=summary;
  const panel=byId('download-panel');panel.hidden=!data.download;
  if(data.download){const d=data.download,pct=Math.round(d.progress*1000)/10;
@@ -338,7 +417,17 @@ function renderProgress(data){
  byId('episodes-panel').hidden=work.kind!=='series';
  byId('episode-summary').textContent=ready.length+' готово · '+missing.length+' ожидается';
  byId('episode-list').replaceChildren();for(const ep of wanted){const li=document.createElement('li');
-  li.textContent=ep.episode+' — '+(ep.available?'есть в Jellyfin':'ожидается');byId('episode-list').append(li);}
+  const date=air[ep.episode];
+  li.textContent=ep.episode+' — '+(ep.available?'есть в Jellyfin':date===''?'дата выхода не объявлена':
+   date&&date>today?'выйдет '+new Date(date+'T12:00:00').toLocaleDateString('ru-RU'):'ожидается');byId('episode-list').append(li);}
+ if(upcoming.length)byId('episode-summary').textContent+=' (из них ещё не вышли: '+upcoming.length+')';
+ const upgrade=parse(job.upgrade_candidate),panel2=byId('upgrade-panel');
+ panel2.hidden=!(upgrade?.candidate||job.replacing);byId('upgrade-apply').hidden=!upgrade?.candidate||Boolean(job.replacing);
+ byId('upgrade-abort').hidden=!job.replacing;
+ if(job.replacing)byId('upgrade-text').textContent='Идёт замена файла на релиз лучше. Старый файл остаётся в библиотеке, пока новый не скачается и не пройдёт проверку.';
+ else if(upgrade?.candidate)byId('upgrade-text').textContent='Найден релиз лучше: «'+upgrade.candidate.release.title+'» ('+
+  upgrade.candidate.release.provider+'). Сейчас '+(upgrade.from.resolution||'?')+'p · '+upgrade.from.score+' баллов → будет '+
+  upgrade.to.resolution+'p · '+upgrade.to.score+' баллов ('+scoreText(upgrade.candidate)+').';
  byId('timeline').replaceChildren();const seen=new Set();
  for(const event of data.events||[]){
   const key=event.state+':'+(event.reason||'');if(seen.has(key))continue;seen.add(key);
@@ -348,7 +437,11 @@ function renderProgress(data){
   appendStep('Проверено '+candidates.length+' вариантов; требованиям соответствуют '+eligible.length+'.');}
  if(chosen?.release){const facts=[...new Set((chosen.claims||[]).map(x=>x.field+': '+x.value))];
   appendStep('Выбран релиз: '+chosen.release.title+' ('+chosen.release.provider+')'+
-   (facts.length?'. Подтверждено: '+facts.join(', '):'. Соответствует заданной политике.'));}
+   (chosen.parsed?.manual?' — выбран вручную':'')+
+   (facts.length?'. Подтверждено: '+facts.join(', '):'. Соответствует заданной политике.'));
+  const rivals=(decision.candidates||[]).filter(x=>!x.reasons?.length&&!x.unknown?.length);
+  if(rivals.length>1&&!chosen.parsed?.manual)appendStep('Почему он: '+scoreOf(chosen)+' баллов ('+(scoreText(chosen)||'без бонусов')+
+   '); других подходящих — '+(rivals.length-1)+'. При равных баллах решают разрешение из основного списка и число сидов.');}
  for(const item of data.imports||[])if(item.state==='PUBLISHED'){
   const release=item.source?.split('/').slice(-2,-1)[0]||'релиз',probe=parse(item.probe)||{};
   const video=(probe.streams||[]).find(x=>x.codec_type==='video'),
@@ -363,7 +456,7 @@ function renderProgress(data){
   appendStep('Jellyfin подтвердил доступные файлы.');
 }
 async function inspect(id){
- const data=await api('/admin/jobs/'+id);selected=id;
+ const data=await api('/admin/jobs/'+id);selected=id;currentJob=data.job;
  byId('inspection').hidden=false;byId('job-title').textContent=(parse(data.job.work)?.title||'Задание')+' · #'+id;
  renderProgress(data);
  renderCandidates(parse(data.job.decision),parse(data.job.candidate));
@@ -373,6 +466,25 @@ async function inspect(id){
  byId('cancel').disabled=['AVAILABLE','CANCELLED'].includes(data.job.state);
 }
 const protocolNames={torznab:'Torznab/Prowlarr',json:'Собственный JSON',nnmclub:'NNM-Club',rutor:'Rutor'};
+const OUTCOMES={RATE_LIMITED:'лимит запросов',TEMPORARY_FAILURE:'временный сбой',AUTH_REQUIRED:'нужен вход',
+ ACCESS_DENIED:'доступ запрещён',PARSER_BROKEN:'страница не разобрана',ERROR:'ошибка',NO_RESULTS:'пусто'};
+function renderHealth(stats){
+ const body=byId('provider-health');body.replaceChildren();
+ if(!stats.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=8;
+  td.textContent='Запросов пока не было — статистика появится после первого поиска.';tr.append(td);body.append(tr);return;}
+ for(const s of stats){
+  const tr=document.createElement('tr');
+  const errors=Object.entries(s.errors).map(([k,v])=>(OUTCOMES[k]||k)+': '+v).join(', ')||'нет';
+  const last=s.last_search_outcome==='OK'?'✔ работает':s.last_search_outcome?'✖ '+(OUTCOMES[s.last_search_outcome]||s.last_search_outcome):'—';
+  const ms=v=>v==null?'—':v<1000?v+' мс':(v/1000).toFixed(1)+' с';
+  const cells=[s.provider,s.searches,ms(s.search_ms),s.cards,ms(s.card_ms),errors,last,s.fit+' / '+s.chosen];
+  cells.forEach((value,i)=>{const td=document.createElement('td');td.textContent=String(value);
+   if(i===6)td.className=s.last_search_outcome==='OK'?'stat-ok':'stat-bad';
+   if(i===6&&s.last_error)td.title='Последняя ошибка: '+(OUTCOMES[s.last_error.outcome]||s.last_error.outcome)+', '+new Date(s.last_error.at*1000).toLocaleString('ru-RU');
+   tr.append(td);});
+  body.append(tr);
+ }
+}
 function renderSources(sources){
  byId('sources-summary').textContent=sources.length?'Поиск идёт по '+sources.length+' '+
   (sources.length===1?'источнику':sources.length<5?'источникам':'источникам')+'.':'Источники не настроены.';
@@ -468,7 +580,7 @@ let searching=false;
 async function refresh(){
  const [overview,sources,profiles,metrics]=await Promise.all([
   api('/admin/overview'),api('/admin/sources'),api('/admin/profiles'),api('/admin/metrics')]);
- renderJobs(overview);
+ renderJobs(overview);renderHealth(await api('/admin/provider-stats').catch(()=>[]));
  renderSources(sources);show('profiles',profiles);show('metrics',metrics);
  if(config===null){config=await api('/admin/config');renderConfig();}
  renderKnownSources(sources,await api('/admin/indexers').catch(()=>[]));
@@ -481,6 +593,14 @@ async function quickRefresh(){
 function renderJobs(overview){
  searching=overview.jobs.some(job=>ACTIVE_SEARCH.has(job.state));
  byId('mode').textContent=overview.dry_run?'Dry-run: загрузки выключены':'Загрузки включены';
+ const gib=b=>b>=1099511627776?(b/1099511627776).toFixed(2)+' ТиБ':(b/1073741824).toFixed(0)+' ГиБ';
+ const disk=overview.disk;if(disk){byId('disk').textContent='💾 свободно '+gib(disk.free)+' из '+gib(disk.total)+
+  (disk.committed?' (ещё '+gib(disk.committed)+' докачивается)':'');
+  byId('disk').className=disk.free-disk.committed<disk.reserve*2?'stat-bad':'';}
+ const t=overview.transfer,sched=overview.speed_schedule;
+ byId('speed').textContent=t?'⇣ '+(t.download_speed/1048576).toFixed(1)+' МиБ/с ⇡ '+(t.upload_speed/1048576).toFixed(1)+' МиБ/с'+
+  (t.limited?' · ограничено до '+(t.alt_download_limit/1048576).toFixed(1)+' МиБ/с':'')+
+  (sched?.enabled?' · расписание '+sched.from+':00–'+sched.to+':00':''):'qBittorrent недоступен';
  byId('jobs').replaceChildren();
  if(!overview.jobs.length)byId('jobs').textContent='Заявок пока нет.';
  for(const job of overview.jobs){
@@ -498,9 +618,18 @@ function renderJobs(overview){
   const lines=[work.kind==='series'?'Сериал':'Фильм'];
   if(work.kind==='series'&&job.wanted)lines.push('готово '+job.ready+' из '+job.wanted+' серий');
   if(job.reason)lines.push(labelReason(job.reason));
+  const air=parse(job.air_dates)||{},today=new Date().toISOString().slice(0,10);
+  const next=Object.values(air).filter(d=>d&&d>today).sort()[0];
+  if(work.kind==='series'&&next)lines.push('следующая серия '+new Date(next+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'}));
+  if(job.replacing)lines.push('🔄 идёт замена на релиз лучше');
+  else if(job.upgrade_resolution)lines.push('⬆ есть релиз лучше'+(job.current_resolution&&job.upgrade_resolution>job.current_resolution?': '+job.upgrade_resolution+'p':''));
   const p=document.createElement('p');p.className='muted';p.textContent=lines.join(' · ');body.append(p);
   if(typeof job.progress==='number'&&job.state==='DOWNLOADING'){const bar=document.createElement('progress');
-   bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';body.append(bar);}
+   bar.className='progress';bar.max=100;bar.value=Math.round(job.progress*1000)/10;bar.title=bar.value+'%';body.append(bar);
+   const info=document.createElement('p');info.className='muted';
+   info.textContent=bar.value+'%'+(job.download_speed?' · '+(job.download_speed/1048576).toFixed(1)+' МиБ/с':'')+
+    (job.eta>0&&job.eta<8640000?' · осталось '+(job.eta>=3600?Math.floor(job.eta/3600)+' ч '+Math.round(job.eta%3600/60)+' мин':Math.ceil(job.eta/60)+' мин'):'');
+   body.append(info);}
   card.onclick=()=>run(()=>inspect(job.id));byId('jobs').append(card);
  }
 }
@@ -532,6 +661,11 @@ setInterval(()=>{
  if(Date.now()-lastFull>=15000){lastFull=Date.now();run(refresh);}
  else if(searching)run(quickRefresh);
 },3000);
+byId('add-studio').onclick=()=>{const name=byId('new-studio').value.trim();if(!name)return;
+ weightRow(byId('studio-weights'),name,name,0);byId('new-studio').value='';};
+byId('upgrade-apply').onclick=()=>run(async()=>{const u=parse(currentJob?.upgrade_candidate);if(u?.candidate)await chooseRelease(u.candidate);});
+byId('upgrade-abort').onclick=()=>run(async()=>{if(selected===null||!confirm('Отменить замену? Файл в библиотеке останется прежним.'))return;
+ await api('/admin/jobs/'+selected+'/abort-upgrade','POST');await refresh();});
 for(const action of ['retry','cancel'])byId(action).onclick=()=>run(async()=>{
  if(selected===null)return;
  if(!confirm(action==='cancel'?'Отменить это задание? Закачка в qBittorrent будет удалена; уже импортированные файлы останутся.':'Повторить обработку этого задания?'))return;

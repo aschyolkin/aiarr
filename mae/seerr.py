@@ -77,11 +77,15 @@ class Seerr:
         path = f"/{'movie' if kind == 'movie' else 'tv'}/{tmdb}"
         detail = self.metadata(path)
         seasons = [s["seasonNumber"] for s in request.get("seasons", []) if s.get("status") == 2]
-        episodes = []
+        episodes, air_dates = [], {}
         if kind == "series":
             for season in seasons:
                 season_data = self.metadata(f"/tv/{tmdb}/season/{season}")
-                episodes.extend(f"S{season:02d}E{ep['episodeNumber']:02d}" for ep in season_data["episodes"])
+                for ep in season_data["episodes"]:
+                    key = f"S{season:02d}E{ep['episodeNumber']:02d}"
+                    episodes.append(key)
+                    date = ep.get("airDate")
+                    air_dates[key] = date if isinstance(date, str) and re.fullmatch(r"\d{4}-\d{2}-\d{2}", date) else ""
         date = detail.get("releaseDate") or detail.get("firstAirDate") or ""
         title = detail.get("title") or detail["name"]
         aliases = [v for v in [detail.get("originalTitle"), detail.get("originalName")] if v]
@@ -103,6 +107,7 @@ class Seerr:
             original_language=language,
             seasons=seasons,
             episodes=episodes,
+            air_dates=air_dates,
             poster_path=poster(detail),
         )
 

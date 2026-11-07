@@ -53,6 +53,7 @@ class Database:
                     update={
                         "seasons": sorted(set(previous["seasons"]) | set(work.seasons)),
                         "episodes": sorted(set(previous["episodes"]) | set(work.episodes)),
+                        "air_dates": {**previous.get("air_dates", {}), **work.air_dates},
                     }
                 )
                 conn.execute(
@@ -115,7 +116,8 @@ class Database:
                 conn.execute(
                     text(
                         "UPDATE jobs SET state='REQUESTED',reason='SEERR_REREQUESTED',next_run=0,"
-                        "torrent_hash=NULL,candidate=NULL,decision=NULL,reserved=0,attempts=0,cancel_pause_done=0,generation=:generation "
+                        "torrent_hash=NULL,candidate=NULL,decision=NULL,reserved=0,attempts=0,cancel_pause_done=0,"
+                        "manual_release=NULL,replacing=0,generation=:generation "
                         "WHERE id=:id"
                     ),
                     {"id": job_id, "generation": generation},
@@ -189,7 +191,10 @@ class Database:
         changed = conn.execute(
             text(
                 "UPDATE jobs SET state='CANCELLED',reason='SEERR_REQUEST_NOT_ACTIVE',next_run=:now,cancel_pause_done=0 "
-                "WHERE id=:id AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED')"
+                "WHERE id=:id AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED') "
+                # Seerr marks a fulfilled request COMPLETED; replacing its
+                # library item with a better release is an admin action.
+                "AND replacing=0"
             ),
             {"id": job_id, "now": now},
         )
@@ -332,7 +337,8 @@ class Database:
                             "AND state NOT IN ('AVAILABLE','CANCELLED','FAILED','NEEDS_REVIEW','AUTH_REQUIRED')"
                         ), {"id": job_id})
 
-    def observe_completed(self, job, coverage):
+    def observe_completed(self, job, coverage, unaired=()):
+        """unaired: monitored episodes not broadcast yet, never 'missing'."""
         work = json.loads(job["work"])
         with self.engine.begin() as conn:
             wanted = (
@@ -343,7 +349,7 @@ class Database:
                     for row in conn.execute(
                         text("SELECT episode FROM episodes WHERE job_id=:id AND monitored=1"), {"id": job["id"]}
                     )
-                }
+                } - set(unaired)
             )
             missing = bool(wanted) and not wanted.issubset(coverage)
             changed = conn.execute(
@@ -447,6 +453,69 @@ class Database:
                     {"job": job_id, "tag": tag_id},
                 )
 
+    BUSY_IMPORTING = ("VERIFYING", "IMPORTING")
+
+    def choose_release(self, job_id, provider, release_id, replacing=False):
+        """Download one release picked by an administrator (or an upgrade).
+
+        A running download of this job is discarded. When replacing a library
+        item, its file and seeding torrent stay until the new file is verified.
+        """
+        now = time.time()
+        with self.engine.begin() as conn:
+            job = conn.execute(text("SELECT * FROM jobs WHERE id=:id"), {"id": job_id}).mappings().first()
+            if job is None:
+                raise KeyError(job_id)
+            if job["state"] == "CANCELLED" or job["state"] in self.BUSY_IMPORTING:
+                raise ValueError("JOB_STATE_DOES_NOT_ALLOW_CHOICE")
+            replacing = replacing or bool(job["replacing"])
+            previous = json.loads(job["manual_release"] or "{}").get("previous_candidate") if job[
+                "replacing"] else job["candidate"]
+            discard = [job["backup_hash"]]
+            if not job["replacing"] and not replacing:
+                discard.append(job["torrent_hash"])
+            elif job["replacing"]:
+                discard.append(job["torrent_hash"])  # an earlier replacement download
+            for torrent_hash in filter(None, discard):
+                conn.execute(text("INSERT OR IGNORE INTO discard_downloads(job_id,torrent_hash) VALUES(:id,:hash)"),
+                             {"id": job_id, "hash": torrent_hash})
+            choice = {"provider": provider, "release_id": release_id}
+            if replacing:
+                choice["previous_candidate"] = previous
+            reason = "UPGRADE_STARTED" if replacing else "MANUAL_RELEASE_CHOSEN"
+            conn.execute(
+                text("UPDATE jobs SET state='REQUESTED',reason=:reason,next_run=:now,attempts=0,"
+                     "manual_release=:choice,replacing=:replacing,torrent_hash=NULL,reserved=0,backup_hash=NULL,"
+                     "backup_candidate=NULL,backup_reserved=0,cancel_pause_done=0 WHERE id=:id"),
+                {"id": job_id, "now": now, "reason": reason, "choice": json.dumps(choice, ensure_ascii=False),
+                 "replacing": int(replacing)},
+            )
+            conn.execute(text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,'REQUESTED',:reason,:now)"),
+                         {"id": job_id, "reason": reason, "now": now})
+
+    def abort_replacement(self, job_id):
+        """Stop an upgrade; the library item and its torrent were never touched."""
+        now = time.time()
+        with self.engine.begin() as conn:
+            job = conn.execute(text("SELECT * FROM jobs WHERE id=:id"), {"id": job_id}).mappings().first()
+            if job is None or not job["replacing"]:
+                return False
+            if job["state"] in self.BUSY_IMPORTING:
+                raise ValueError("REPLACEMENT_IMPORT_IN_PROGRESS")
+            for torrent_hash in filter(None, (job["torrent_hash"], job["backup_hash"])):
+                conn.execute(text("INSERT OR IGNORE INTO discard_downloads(job_id,torrent_hash) VALUES(:id,:hash)"),
+                             {"id": job_id, "hash": torrent_hash})
+            previous = json.loads(job["manual_release"] or "{}").get("previous_candidate")
+            conn.execute(
+                text("UPDATE jobs SET state='AVAILABLE',reason='UPGRADE_CANCELLED',next_run=:now,manual_release=NULL,"
+                     "replacing=0,torrent_hash=NULL,candidate=:candidate,reserved=0,backup_hash=NULL,"
+                     "backup_candidate=NULL,backup_reserved=0 WHERE id=:id"),
+                {"id": job_id, "now": now, "candidate": previous},
+            )
+            conn.execute(text("INSERT INTO events(job_id,state,reason,created) "
+                              "VALUES(:id,'AVAILABLE','UPGRADE_CANCELLED',:now)"), {"id": job_id, "now": now})
+            return True
+
     def save_partial_decision(self, job_id, decision):
         """Expose search progress without a state change or journal event."""
         self.execute(
@@ -458,6 +527,7 @@ class Database:
         allowed = {
             "attempts", "candidate", "torrent_hash", "reserved", "decision", "dry_run",
             "backup_hash", "backup_candidate", "backup_reserved", "download_started",
+            "manual_release", "replacing", "upgrade_candidate", "upgrade_checked",
         }
         if set(updates) - allowed:
             raise ValueError("unsupported job update")

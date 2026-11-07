@@ -280,6 +280,34 @@ class Downloader:
             raise ProviderError(Outcome.TEMPORARY_FAILURE)
         return True
 
+    def apply_speed_limits(self, limited, download, upload):
+        """Global alternative limits (bytes/s), switched on only while limited.
+
+        qBittorrent's own scheduler runs in the container's time zone, so
+        aiarr switches the mode itself and keeps that scheduler off.
+        """
+        prefs = self.client.app_preferences()
+        wanted = {"alt_dl_limit": download, "alt_up_limit": upload, "scheduler_enabled": False}
+        changes = {key: value for key, value in wanted.items() if prefs.get(key) != value}
+        if changes:
+            self.client.app_set_preferences(prefs=changes)
+        if self.speed_limited() != limited:
+            self.client.transfer_set_speed_limits_mode(intended_state=limited)
+
+    def speed_limited(self):
+        return str(self.client.transfer_speed_limits_mode()) == "1"
+
+    def transfer(self):
+        info = self.client.transfer_info()
+        prefs = self.client.app_preferences()
+        return {
+            "limited": self.speed_limited(),
+            "download_speed": int(info.get("dl_info_speed") or 0),
+            "upload_speed": int(info.get("up_info_speed") or 0),
+            "alt_download_limit": int(prefs.get("alt_dl_limit") or 0),
+            "alt_upload_limit": int(prefs.get("alt_up_limit") or 0),
+        }
+
     def pause(self, torrent_hash):
         """Pause only a torrent that remains demonstrably owned by this engine."""
         if self.info(torrent_hash) is None:

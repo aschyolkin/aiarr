@@ -35,7 +35,7 @@ class Evidence(BaseModel):
 
 class Claim(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    field: Literal["audio_language", "studio", "video_codec", "resolution"]
+    field: Literal["audio_language", "studio", "video_codec", "resolution", "voice"]
     value: str
     evidence_id: str
     quote: str = Field(min_length=1, max_length=500)
@@ -54,6 +54,9 @@ class Work(BaseModel):
     episodes: list[str] = []
     # Transient search context: monitored episodes already confirmed in library.
     covered_episodes: list[str] = []
+    # Episode key -> TMDB air date (YYYY-MM-DD, "" if unannounced). Episodes
+    # absent here predate air dates and are treated as aired.
+    air_dates: dict[str, str] = {}
     # TMDB poster path from Seerr, display only.
     poster_path: str | None = Field(default=None, max_length=200, pattern=r"^/[A-Za-z0-9_.-]+$")
 

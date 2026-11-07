@@ -32,7 +32,7 @@ def validate_interpretation(raw, evidence):
     answer = Interpretation.model_validate_json(raw)
     by_id = {e.id: e.text for e in evidence}
     for c in answer.claims:
-        if c.evidence_id not in by_id or c.quote not in by_id[c.evidence_id] or c.value not in CLAIM_VALUES[c.field]:
+        if c.evidence_id not in by_id or c.quote not in by_id[c.evidence_id] or c.value not in CLAIM_VALUES.get(c.field, ()):
             raise ValueError("unsupported or ungrounded claim")
         c.method = MODEL
     return answer

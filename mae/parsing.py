@@ -11,7 +11,39 @@ STUDIOS = {
     "AlexFilm": r"\balex[ ._-]?film\b",
     "Red Head Sound": r"\bred[ ._-]?head[ ._-]?sound\b|\bR\.?H\.?S\.?\b|РХС",
     "Flarrow Films": r"\bflarrow[ ._-]?films?\b",
+    "HDRezka": r"\bhd[ ._-]?rezka\b",
+    "Кубик в Кубе": r"кубик[ ._-]+в[ ._-]+кубе|\bkubik[ ._-]?v[ ._-]?kube\b",
+    "TVShows": r"\btv[ ._-]?shows\b",
+    "Jaskier": r"\bjaskier\b",
+    "Пифагор": r"пифагор|\bpifagor\b",
+    "Novamedia": r"\bnova[ ._-]?media\b",
+    "Кураж-Бамбей": r"кураж[ ._-]?бамбей|\bkurazh[ ._-]?bambey\b",
+    "SDI Media": r"\bsdi[ ._-]?media\b",
 }
+# Titles are noisier than audio lines: no bare abbreviations such as RHS.
+TITLE_STUDIOS = {**STUDIOS, "Red Head Sound": r"\bred[ ._-]?head[ ._-]?sound\b"}
+VOICES = (
+    ("Dub", r"(?i)(?<![\w-])dub(?![\w-])|дубляж|дублир"),
+    ("MVO", r"(?i)(?<![\w-])mvo(?![\w-])|многоголос"),
+    ("DVO", r"(?i)(?<![\w-])dvo(?![\w-])|двухголос"),
+    ("AVO", r"(?i)(?<![\w-])avo(?![\w-])|авторск"),
+    ("VO", r"(?i)(?<![\w-])vo(?![\w-])|одноголос"),
+)
+# Rutracker-style title suffix codes: '| D, P2, A'.
+VOICE_CODES = {"D": "Dub", "P": "MVO", "P2": "DVO", "P1": "VO", "A": "AVO", "L": "VO", "L1": "VO", "L2": "VO"}
+
+
+def studio_pattern(name):
+    """A custom studio name from the policy, matched as whole words."""
+    return r"(?i)(?<!\w)" + r"[ ._-]?".join(re.escape(part) for part in name.split()) + r"(?!\w)"
+
+
+def voices_in(text):
+    found = [voice for voice, pattern in VOICES if re.search(pattern, text)]
+    suffix = re.search(r"\|\s*((?:D|P\d?|L\d?|A|Sub)(?:\s*,\s*(?:D|P\d?|L\d?|A|Sub))*)\s*$", text)
+    if suffix:
+        found += [VOICE_CODES[code.strip()] for code in suffix[1].split(",") if code.strip() in VOICE_CODES]
+    return list(dict.fromkeys(found))
 
 # Russian trackers mark the translation in the title; on these trackers every
 # such marker denotes a Russian track (VO = single voice-over, D/P/L = dubbing,
@@ -64,7 +96,9 @@ def _video_line_facts(line):
     return codecs, resolutions
 
 
-def parse_candidate(release, details):
+def parse_candidate(release, details, studios=()):
+    """studios: extra policy studio names to recognize beyond STUDIOS."""
+    extra = {name: studio_pattern(name) for name in studios if name not in STUDIOS}
     raw = guessit(release.title[:1000])
     fields = ("title", "year", "season", "episode", "screen_size", "source", "video_codec", "type")
     parsed = {key: raw[key] for key in fields if key in raw}
@@ -85,6 +119,18 @@ def parse_candidate(release, details):
     )
     if marker := TITLE_TRANSLATION.search(release.title):
         c.claims.append(Claim(field="audio_language", value="rus", evidence_id="title", quote=marker[0].strip()))
+        for voice in voices_in(release.title):
+            c.claims.append(Claim(field="voice", value=voice, evidence_id="title", quote=marker[0].strip()))
+    for studio, pattern in {**TITLE_STUDIOS, **extra}.items():
+        if found := re.search(pattern, release.title, re.I):
+            c.claims.append(Claim(field="studio", value=studio, evidence_id="title", quote=found[0]))
+
+    def line_facts(evidence, line):
+        for studio, pattern in {**STUDIOS, **extra}.items():
+            if re.search(pattern, line, re.I):
+                c.claims.append(Claim(field="studio", value=studio, evidence_id=evidence.id, quote=line[:500]))
+        for voice in voices_in(line):
+            c.claims.append(Claim(field="voice", value=voice, evidence_id=evidence.id, quote=line[:500]))
     # Only explicitly scoped audio evidence; MULTI/RUS title suffix is insufficient.
     card_codecs, card_resolutions = set(), set()
     for evidence in details.evidence:
@@ -117,6 +163,7 @@ def parse_candidate(release, details):
                     c.claims.append(
                         Claim(field="audio_language", value="rus", evidence_id=evidence.id, quote=line[:500])
                     )
+                    line_facts(evidence, line)
                 continue
             direct_audio = bool(
                 re.match(
@@ -131,15 +178,21 @@ def parse_candidate(release, details):
             line = re.split(r"(?i)(?:subtitles?|субтитры|text)\s*[:：]?", line, maxsplit=1)[0]
             if re.search(r"(?i)\b(?:not|no|without|нет|без|отсутствует)\b", line):
                 continue
-            if re.search(r"(?i)\b(rus|russian|русский|русская|dub)\b", line):
+            russian = re.search(r"(?i)\b(rus|russian|русский|русская|dub)\b", line)
+            if russian:
                 c.claims.append(
                     Claim(field="audio_language", value="rus", evidence_id=evidence.id, quote=line[:500])
                 )
             if direct_audio:
-                for studio, pattern in STUDIOS.items():
+                for studio, pattern in {**STUDIOS, **extra}.items():
                     if re.search(pattern, line, re.I):
                         c.claims.append(
                             Claim(field="studio", value=studio, evidence_id=evidence.id, quote=line[:500])
+                        )
+                if russian:
+                    for voice in voices_in(line):
+                        c.claims.append(
+                            Claim(field="voice", value=voice, evidence_id=evidence.id, quote=line[:500])
                         )
     if len(card_codecs) > 1 or (card_codecs and parsed.get("video_codec") not in (None, *card_codecs)):
         c.parsed["video_codec_conflict"] = True

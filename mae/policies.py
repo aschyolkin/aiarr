@@ -79,4 +79,6 @@ def evaluate(candidate, work, policy):
     }
     studios = {cl.value for cl in c.claims if cl.field == "studio"}
     c.score["studio"] = max([policy.studio_weights.get(s, 0) for s in studios], default=0)
+    voices = {cl.value for cl in c.claims if cl.field == "voice"}
+    c.score["voice"] = max([policy.voice_weights.get(v, 0) for v in voices], default=0)
     return c

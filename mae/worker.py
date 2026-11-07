@@ -1,6 +1,8 @@
+import calendar
 import fcntl
 import json
 import logging
+import os
 import re
 import shutil
 import stat
@@ -11,7 +13,7 @@ from guessit import guessit
 
 from mae.db import Database
 from mae.deepseek import DeepSeek
-from mae.domain import Outcome, ProviderError, Work
+from mae.domain import Candidate, Outcome, ProviderError, ReleaseDetails, Work
 from mae.downloads import Downloader, safe_relative, torrent_metadata
 from mae.errors import failure
 from mae.importing import destination_for
@@ -19,7 +21,7 @@ from mae.jellyfin import Jellyfin
 from mae.parsing import apply_resolution_claims, episode_keys, normalize_title, parse_candidate
 from mae.policies import evaluate
 from mae.providers import make_provider
-from mae.verification import check_path, probe, publish_hardlink, verify
+from mae.verification import check_path, probe, publish_hardlink, resolution_class, verify
 
 log = logging.getLogger("mae")
 
@@ -28,6 +30,11 @@ class Worker:
     dependency_retry_seconds = 300
     monitor_interval = 30
     last_monitor = 0.0
+    last_speed_check = 0.0
+    last_cleanup = 0.0
+    last_prune = 0.0
+    # An upgrade must beat the library item by a resolution step or by this many points.
+    upgrade_margin = 10
 
     def __init__(self, settings, db=None, providers=None, downloader=None):
         self.settings = settings
@@ -62,6 +69,11 @@ class Worker:
             )
             for job in jobs:
                 self.run_job(job)
+            self.apply_speed_schedule()
+            if not self.settings.dry_run:
+                self.cleanup_seeded()
+                self.check_upgrades()
+            self.prune_stats()
             return True
 
     def run_job(self, job):
@@ -222,8 +234,9 @@ class Worker:
             "SELECT * FROM jobs WHERE state='AVAILABLE' AND next_run<=:now", now=time.time()
         ):
             try:
-                coverage = Jellyfin(self.settings).coverage(Work.model_validate_json(job["work"]))
-                self.db.observe_completed(job, coverage)
+                work = Work.model_validate_json(job["work"])
+                coverage = Jellyfin(self.settings).coverage(work)
+                self.db.observe_completed(job, coverage, self.unaired(work, work.episodes))
             except Exception as exc:
                 # Failed observations are unknown, never evidence that a file vanished.
                 self.db.execute(
@@ -242,6 +255,171 @@ class Worker:
                     )
                 )
 
+    def prune_stats(self):
+        if time.monotonic() - self.last_prune < 3600 and self.last_prune:
+            return
+        self.last_prune = time.monotonic()
+        self.db.execute("DELETE FROM provider_stats WHERE created<:old", old=time.time() - 30 * 86400)
+
+    def speed_limited_now(self, now=None):
+        """Whether the local hour falls in [from, to); the window may cross midnight."""
+        start, end = self.settings.speed_limited_from_hour, self.settings.speed_limited_to_hour
+        hour = int(((time.time() if now is None else now) / 3600 + self.settings.utc_offset_hours) % 24)
+        if start == end:
+            return False
+        return start <= hour < end if start < end else hour >= start or hour < end
+
+    def apply_speed_schedule(self):
+        """Switch qBittorrent's alternative speed limits on the configured schedule."""
+        if self.last_speed_check and time.monotonic() - self.last_speed_check < 60:
+            return
+        self.last_speed_check = time.monotonic()
+        marker = self.settings.state_dir / "speed-schedule-active"
+        try:
+            if self.settings.speed_schedule_enabled:
+                self.downloader.apply_speed_limits(
+                    self.speed_limited_now(), self.settings.speed_limit_download, self.settings.speed_limit_upload
+                )
+                marker.touch()
+            elif marker.exists():
+                # The schedule was switched off: lift the limit aiarr had set, once.
+                if self.downloader.speed_limited():
+                    self.downloader.client.transfer_set_speed_limits_mode(intended_state=False)
+                marker.unlink()
+        except Exception as exc:
+            log.warning(json.dumps({"event": "speed_schedule_failed", "type": type(exc).__name__}))
+
+    def cleanup_seeded(self):
+        """Remove torrents of finished imports from qBittorrent after cleanup_after_days.
+
+        The library file is a separate hardlink and stays; only torrents whose
+        every imported file is still the journaled library inode are removed.
+        """
+        days = self.settings.cleanup_after_days
+        if not days or (self.last_cleanup and time.monotonic() - self.last_cleanup < 600):
+            return
+        self.last_cleanup = time.monotonic()
+        rows = self.db.execute(
+            "SELECT d.job_id,d.torrent_hash,j.torrent_hash current FROM job_downloads d JOIN jobs j ON j.id=d.job_id "
+            "WHERE j.replacing=0 AND d.torrent_hash IS NOT j.backup_hash AND (j.state='AVAILABLE' OR "
+            "(j.state='WAITING_FOR_RELEASE' AND d.torrent_hash IS NOT j.torrent_hash))"
+        )
+        for row in rows:
+            try:
+                self.cleanup_torrent(row, days)
+            except Exception as exc:
+                log.warning(json.dumps({"event": "seed_cleanup_failed", "job": row["job_id"],
+                                        "type": type(exc).__name__}))
+
+    def cleanup_torrent(self, row, days):
+        torrent_hash = row["torrent_hash"]
+        info = self.downloader.info(torrent_hash)
+        if info is None or float(info.get("progress") or 0) < 1:
+            return
+        completed = float(info.get("completion_on") or 0)
+        if completed <= 0 or time.time() - completed < days * 86400:
+            return
+        save_path = Path(info.get("save_path") or "")
+        files = {str(save_path / safe_relative(f["name"])) for f in self.downloader.files(torrent_hash)}
+        imports = [
+            r for r in self.db.execute(
+                "SELECT * FROM imports WHERE job_id=:id AND state='PUBLISHED'", id=row["job_id"]
+            ) if r["source"] in files
+        ]
+        if not imports or self.shared_download(row["job_id"], torrent_hash):
+            return
+        for item in imports:
+            try:
+                current = Path(item["destination"]).lstat()
+            except FileNotFoundError:
+                return
+            if (current.st_dev, current.st_ino) != (item["device"], item["inode"]):
+                return
+        self.downloader.delete_owned(torrent_hash, self.settings.store / "downloads")
+        self.db.execute("DELETE FROM job_downloads WHERE job_id=:id AND torrent_hash=:hash",
+                        id=row["job_id"], hash=torrent_hash)
+        self.db.execute("UPDATE jobs SET torrent_hash=NULL WHERE id=:id AND torrent_hash=:hash",
+                        id=row["job_id"], hash=torrent_hash)
+        self.db.execute(
+            "INSERT INTO events(job_id,state,reason,created) SELECT id,state,'SEEDING_CLEANED',:now "
+            "FROM jobs WHERE id=:id", id=row["job_id"], now=time.time(),
+        )
+
+    def check_upgrades(self):
+        """Re-search one available movie per tick for a clearly better release."""
+        hours = self.settings.upgrade_check_hours
+        if not hours or not self.providers:
+            return
+        for job in self.db.execute(
+            "SELECT * FROM jobs WHERE state='AVAILABLE' AND replacing=0 AND dry_run=0 AND identity LIKE 'movie:%' "
+            "AND upgrade_checked<:due ORDER BY upgrade_checked,id LIMIT 1", due=time.time() - hours * 3600,
+        ):
+            # Marked first: a failing source must not re-run the search every tick.
+            self.db.execute("UPDATE jobs SET upgrade_checked=:now WHERE id=:id", id=job["id"], now=time.time())
+            try:
+                self.check_upgrade(job)
+            except Exception as exc:
+                log.warning(json.dumps({"event": "upgrade_check_failed", "job": job["id"],
+                                        "type": type(exc).__name__}))
+
+    def library_quality(self, job, work):
+        """(resolution, score) of the library item, re-scored under the current policy."""
+        resolution = 0
+        for row in self.db.execute(
+            "SELECT probe FROM imports WHERE job_id=:id AND state='PUBLISHED'", id=job["id"]
+        ):
+            for stream in json.loads(row["probe"] or "{}").get("streams", []):
+                if stream.get("codec_type") == "video":
+                    resolution = max(resolution, resolution_class(stream.get("width", 0), stream.get("height", 0)) or 0)
+        score = 0
+        if job["candidate"]:
+            stored = Candidate.model_validate_json(job["candidate"])
+            if not resolution:
+                resolution = int(str(stored.parsed.get("screen_size") or "0p")[:-1] or 0)
+            details = ReleaseDetails(evidence=[e for e in stored.evidence if e.id != "title"])
+            rescored = evaluate(parse_candidate(stored.release, details, list(self.settings.policy.studio_weights)),
+                                work, self.settings.policy)
+            # LLM-confirmed facts are not re-derived here; keep the stored score then.
+            score = sum((rescored.score if not rescored.unknown else stored.score).values())
+        return resolution, score
+
+    def check_upgrade(self, job):
+        work = Work.model_validate_json(job["work"])
+        resolution, score = self.library_quality(job, work)
+        _, _, eligible, _ = self.search_candidates(job, work, use_llm=False, progress=False)
+        current = json.loads(job["candidate"] or "{}").get("release") or {}
+        preferred = set(self.settings.policy.resolutions)
+        best = None
+        for rank, candidate, provider in eligible:
+            release = candidate.release
+            if (release.provider, release.release_id) == (current.get("provider"), current.get("release_id")):
+                continue
+            size = int(str(candidate.parsed.get("screen_size") or "0p")[:-1] or 0)
+            if size not in preferred:
+                continue
+            better = size > resolution or (size == resolution and rank >= score + self.upgrade_margin)
+            if better and (best is None or (size, rank) > best[0]):
+                best = ((size, rank), candidate, provider)
+        if best is None:
+            self.db.execute("UPDATE jobs SET upgrade_candidate=NULL WHERE id=:id", id=job["id"])
+            return
+        (size, rank), candidate, provider = best
+        previous = (json.loads(job["upgrade_candidate"] or "{}").get("candidate") or {}).get("release") or {}
+        payload = {
+            "candidate": candidate.model_dump(), "found": time.time(),
+            "from": {"resolution": resolution, "score": score}, "to": {"resolution": size, "score": rank},
+        }
+        self.db.execute("UPDATE jobs SET upgrade_candidate=:value WHERE id=:id AND state='AVAILABLE'",
+                        id=job["id"], value=json.dumps(payload, ensure_ascii=False))
+        if previous.get("release_id") != candidate.release.release_id:
+            self.db.execute(
+                "INSERT INTO events(job_id,state,reason,created) VALUES(:id,'AVAILABLE','UPGRADE_AVAILABLE',:now)",
+                id=job["id"], now=time.time(),
+            )
+        if self.settings.auto_upgrade:
+            self.db.choose_release(job["id"], candidate.release.provider, candidate.release.release_id,
+                                   replacing=True)
+
     def retry(self, job, reason, minimum=60):
         attempts = self.db.job(job["id"])["attempts"] + 1
         state = "FAILED" if attempts >= self.settings.max_attempts else "RETRY_SCHEDULED"
@@ -254,16 +432,25 @@ class Worker:
         if current["state"] != job["state"]:
             return
         work = Work.model_validate_json(job["work"])
+        upcoming = {}
         if work.kind == "series":
-            work = work.model_copy(update={"episodes": self.db.desired_episodes(job["id"])})
+            desired = self.db.desired_episodes(job["id"])
+            # Announced but not yet broadcast episodes are awaited, not searched.
+            upcoming = self.unaired(work, desired)
+            work = work.model_copy(update={"episodes": [e for e in desired if e not in upcoming]})
         if job["torrent_hash"]:
-            return self.monitor(job, work)
+            return self.monitor(job, work, upcoming)
+        manual = json.loads(job["manual_release"] or "{}")
+        manual = manual if manual.get("release_id") else None
         library_coverage = set()
         if self.settings.jellyfin_key.get_secret_value() or not (job["dry_run"] or self.settings.dry_run):
             library_coverage = Jellyfin(self.settings).coverage(work)
             self.db.record_coverage(job["id"], library_coverage)
             wanted = {"movie"} if work.kind == "movie" else set(work.episodes)
-            if wanted and wanted.issubset(library_coverage):
+            if wanted and wanted.issubset(library_coverage) and not job["replacing"]:
+                if upcoming:
+                    self.wait_for_air(job, upcoming)
+                    return
                 self.db.transition(
                     job["id"],
                     "AVAILABLE",
@@ -288,6 +475,9 @@ class Worker:
         covered.update(library_coverage)
         if work.kind == "series":
             if not work.episodes:
+                if upcoming:
+                    self.wait_for_air(job, upcoming)
+                    return
                 self.db.transition(job["id"], "WAITING_FOR_RELEASE", "NO_EPISODES_IN_METADATA", delay=3600)
                 return
             monitored = set(work.episodes)
@@ -296,6 +486,9 @@ class Worker:
                 "covered_episodes": sorted(monitored & covered),
             })
             if not work.episodes:
+                if upcoming:
+                    self.wait_for_air(job, upcoming)
+                    return
                 self.db.transition(job["id"], "AVAILABLE", reserved=0)
                 return
         if not self.providers:
@@ -307,20 +500,111 @@ class Worker:
             now=time.time(),
         )
         self.db.transition(job["id"], "SEARCHING")
+        if manual:
+            chosen = self.manual_candidate(job, work, manual)
+            if chosen is None:
+                return
+            ranked = [chosen]
+        else:
+            decisions, errors, eligible, skipped_stalled = self.search_candidates(job, work)
+            decision = json.dumps(
+                {"policy": self.settings.policy.model_dump(), "candidates": decisions, "errors": errors}
+            )
+            self.db.transition(job["id"], "SELECTED" if eligible else "WAITING_FOR_RELEASE", decision=decision)
+            if not eligible:
+                if skipped_stalled:
+                    # Every usable release had no peers; seeders may return, so the
+                    # next hourly search tries them again.
+                    self.db.execute("DELETE FROM stalled_releases WHERE job_id=:id AND slow=0", id=job["id"])
+                # Unknown properties of already rejected releases cannot turn a
+                # wrong movie/season or forbidden source into a review candidate.
+                state = (
+                    "NEEDS_REVIEW"
+                    if any(c["unknown"] and not c["reasons"] for c in decisions)
+                    else "WAITING_FOR_RELEASE"
+                )
+                if errors and not decisions:
+                    if not any(e["outcome"] in {"AUTH_REQUIRED", "ACCESS_DENIED"} for e in errors):
+                        # A search result page can be valid while a later release
+                        # card fetch fails. Preserve that distinction for retries
+                        # and source diagnostics.
+                        reason = (
+                            "PROVIDER_ENRICHMENT_FAILED"
+                            if any(e["stage"] == "ENRICHING" for e in errors)
+                            else "PROVIDER_SEARCH_FAILED"
+                        )
+                        self.retry(job, reason, max(e["retry_after"] for e in errors))
+                        return
+                    state = "AUTH_REQUIRED"
+                self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
+                return
+            ranked = self.rank(eligible, work, job["id"])
+        _, candidate, provider = ranked[0]
+        if work.kind == "series":
+            candidate.parsed["download_episodes"] = work.episodes
+        self.db.transition(job["id"], "SELECTED", candidate=candidate.model_dump_json())
+        if job["dry_run"] or self.settings.dry_run:
+            self.db.transition(job["id"], "NEEDS_REVIEW", "DRY_RUN_SELECTED")
+            return
+        active = self.db.execute(
+            "SELECT COUNT(*) n,SUM(reserved)+SUM(backup_reserved) bytes FROM jobs WHERE torrent_hash IS NOT NULL "
+            "AND state NOT IN ('AVAILABLE','CANCELLED')"
+        )[0]
+        if active["n"] >= self.settings.max_downloads:
+            self.db.transition(job["id"], "RETRY_SCHEDULED", "DOWNLOAD_QUEUE_LIMIT", delay=60)
+            return
+        torrent_hash, size, raw = self.prepare_torrent(provider, candidate, work)
+        committed = size + (active["bytes"] or 0)
+        if shutil.disk_usage(self.settings.store).free < committed + self.settings.reserve_bytes:
+            self.db.transition(job["id"], "RETRY_SCHEDULED", "INSUFFICIENT_SPACE", delay=600)
+            return
+        if self.db.job(job["id"])["state"] in {"CANCELLED", "NEEDS_REVIEW", "WAITING_FOR_RELEASE"}:
+            return
+        # Persist intent before network action. On ambiguous add timeout, monitor hash
+        # on restart; never add again blindly or issue a second candidate.
+        self.db.transition(
+            job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size, download_started=time.time(),
+            # A replacement keeps only what is needed to cancel it.
+            manual_release=json.dumps({"previous_candidate": json.loads(job["manual_release"] or "{}").get(
+                "previous_candidate")}) if job["replacing"] else None,
+        )
+        self.start_torrent(torrent_hash, raw, work)
+        if len(ranked) > 1:
+            self.start_backup(job, work, ranked[1], torrent_hash, committed)
+
+    def rank(self, eligible, work, job_id):
+        wanted = set(work.episodes)
+        slow_keys = {(row["provider"], row["release_id"]) for row in self.db.execute(
+            "SELECT provider,release_id FROM stalled_releases WHERE job_id=:id AND slow=1", id=job_id
+        )}
+
+        def coverage(item):
+            # For a series, more of the missing episodes beats a higher resolution.
+            return len(set(episode_keys(item[1].parsed)) & wanted) if work.kind == "series" else 0
+
+        return sorted(
+            eligible, key=lambda item: (coverage(item), *self.download_preference(item, slow_keys)), reverse=True
+        )
+
+    def search_candidates(self, job, work, use_llm=True, progress=True):
+        """Search every source; returns decisions, errors, eligible and whether stalled were skipped.
+
+        progress=False (upgrade checks) leaves the job's state and decision untouched.
+        """
         selected = None
         decisions, errors = [], []
         tried = {(row["provider"], row["release_id"]): row["slow"] for row in self.db.execute(
             "SELECT provider,release_id,slow FROM stalled_releases WHERE job_id=:id", id=job["id"]
         )}
         stalled = {key for key, slow in tried.items() if not slow}
-        slow_keys = {key for key, slow in tried.items() if slow}
         skipped_stalled = False
         eligible = []
         published = 0.0
+        studios = list(self.settings.policy.studio_weights)
 
         def publish_progress(force=False):
             nonlocal published
-            if force or time.monotonic() - published >= 1:
+            if progress and (force or time.monotonic() - published >= 1):
                 published = time.monotonic()
                 self.db.save_partial_decision(job["id"], json.dumps({
                     "policy": self.settings.policy.model_dump(), "candidates": decisions,
@@ -334,7 +618,7 @@ class Worker:
                 viable = []
                 for release in results:
                     preliminary = evaluate(
-                        parse_candidate(release, provider_details_empty()), work, self.settings.policy
+                        parse_candidate(release, provider_details_empty(), studios), work, self.settings.policy
                     )
                     if self.card_cannot_help(preliminary):
                         # Size, year, season, source or a title that is not this work:
@@ -354,11 +638,12 @@ class Worker:
                     if selected and index >= self.settings.enrichment_limit:
                         break
                     self.monitor_downloads(job["id"])
-                    self.db.transition(job["id"], "ENRICHING")
-                    details = provider.fetch_details(release)
-                    parsed_candidate = parse_candidate(release, details)
+                    if progress:
+                        self.db.transition(job["id"], "ENRICHING")
+                    details = self.timed(provider, "ENRICHING", lambda: provider.fetch_details(release))
+                    parsed_candidate = parse_candidate(release, details, studios)
                     candidate = evaluate(parsed_candidate, work, self.settings.policy)
-                    if candidate.unknown and not candidate.reasons:
+                    if use_llm and candidate.unknown and not candidate.reasons:
                         # The release title is evidence too; some sources have no card.
                         interpretation = DeepSeek(self.settings, self.db).interpret(
                             parsed_candidate.evidence, request_key=f"job:{job['id']}:generation:{job['generation']}"
@@ -390,75 +675,97 @@ class Worker:
                     }
                 )
             publish_progress(force=True)
-        decision = json.dumps(
-            {"policy": self.settings.policy.model_dump(), "candidates": decisions, "errors": errors}
-        )
-        self.db.transition(job["id"], "SELECTED" if selected else "WAITING_FOR_RELEASE", decision=decision)
-        if not selected:
-            if skipped_stalled:
-                # Every usable release had no peers; seeders may return, so the
-                # next hourly search tries them again.
-                self.db.execute("DELETE FROM stalled_releases WHERE job_id=:id AND slow=0", id=job["id"])
-            # Unknown properties of already rejected releases cannot turn a
-            # wrong movie/season or forbidden source into a review candidate.
-            state = (
-                "NEEDS_REVIEW"
-                if any(c["unknown"] and not c["reasons"] for c in decisions)
-                else "WAITING_FOR_RELEASE"
+        return decisions, errors, eligible, skipped_stalled
+
+    # Rejections a download cannot overcome: the torrent check or ffprobe
+    # verification would refuse the file anyway.
+    UNCHOOSABLE = frozenset({"TOO_LARGE", "FILE_TOO_LARGE", "VIDEO_CODEC_NOT_ALLOWED", "NOT_VIDEO_RELEASE"})
+
+    @classmethod
+    def choosable(cls, candidate):
+        reasons = set(candidate.get("reasons") or [])
+        if reasons & cls.UNCHOOSABLE:
+            return False
+        parsed = candidate.get("parsed") or {}
+        return not ("RESOLUTION_NOT_ALLOWED" in reasons and parsed.get("screen_size"))
+
+    def manual_candidate(self, job, work, manual):
+        """Find the administrator's release again; its download handle lives only in a search."""
+        provider = next((p for p in self.providers if p.config.name == manual.get("provider")), None)
+        release = None
+        if provider is not None:
+            release = next(
+                (r for r in self.search_all(provider, work) if r.release_id == manual.get("release_id")), None
             )
-            if errors and not decisions:
-                if not any(e["outcome"] in {"AUTH_REQUIRED", "ACCESS_DENIED"} for e in errors):
-                    # A search result page can be valid while a later release
-                    # card fetch fails. Preserve that distinction for retries
-                    # and source diagnostics.
-                    reason = (
-                        "PROVIDER_ENRICHMENT_FAILED"
-                        if any(e["stage"] == "ENRICHING" for e in errors)
-                        else "PROVIDER_SEARCH_FAILED"
-                    )
-                    self.retry(job, reason, max(e["retry_after"] for e in errors))
-                    return
-                state = "AUTH_REQUIRED"
-            self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
-            return
-        wanted = set(work.episodes)
-
-        def coverage(item):
-            # For a series, more of the missing episodes beats a higher resolution.
-            return len(set(episode_keys(item[1].parsed)) & wanted) if work.kind == "series" else 0
-
-        ranked = sorted(
-            eligible, key=lambda item: (coverage(item), *self.download_preference(item, slow_keys)), reverse=True
+        if release is None:
+            reason = "MANUAL_RELEASE_SOURCE_GONE" if provider is None else "MANUAL_RELEASE_NOT_FOUND"
+            if job["replacing"]:
+                self.db.abort_replacement(job["id"])
+                self.db.execute(
+                    "INSERT INTO events(job_id,state,reason,created) VALUES(:id,'AVAILABLE',:reason,:now)",
+                    id=job["id"], reason=reason, now=time.time(),
+                )
+            else:
+                self.db.transition(job["id"], "NEEDS_REVIEW", reason, manual_release=None)
+            return None
+        details = self.timed(provider, "ENRICHING", lambda: provider.fetch_details(release))
+        candidate = evaluate(
+            parse_candidate(release, details, list(self.settings.policy.studio_weights)), work, self.settings.policy
         )
-        _, candidate, provider = ranked[0]
-        if work.kind == "series":
-            candidate.parsed["download_episodes"] = work.episodes
-        self.db.transition(job["id"], "SELECTED", candidate=candidate.model_dump_json())
-        if job["dry_run"] or self.settings.dry_run:
-            self.db.transition(job["id"], "NEEDS_REVIEW", "DRY_RUN_SELECTED")
-            return
-        active = self.db.execute(
-            "SELECT COUNT(*) n,SUM(reserved)+SUM(backup_reserved) bytes FROM jobs WHERE torrent_hash IS NOT NULL "
-            "AND state NOT IN ('AVAILABLE','CANCELLED')"
-        )[0]
-        if active["n"] >= self.settings.max_downloads:
-            self.db.transition(job["id"], "RETRY_SCHEDULED", "DOWNLOAD_QUEUE_LIMIT", delay=60)
-            return
-        torrent_hash, size, raw = self.prepare_torrent(provider, candidate, work)
-        committed = size + (active["bytes"] or 0)
-        if shutil.disk_usage(self.settings.store).free < committed + self.settings.reserve_bytes:
-            self.db.transition(job["id"], "RETRY_SCHEDULED", "INSUFFICIENT_SPACE", delay=600)
-            return
-        if self.db.job(job["id"])["state"] in {"CANCELLED", "NEEDS_REVIEW", "WAITING_FOR_RELEASE"}:
-            return
-        # Persist intent before network action. On ambiguous add timeout, monitor hash
-        # on restart; never add again blindly or issue a second candidate.
+        if not self.choosable(candidate.model_dump()):
+            self.db.transition(job["id"], "NEEDS_REVIEW", "MANUAL_RELEASE_NOT_DOWNLOADABLE", manual_release=None)
+            return None
+        # The administrator overrides title/year/audio doubts; the torrent
+        # check and ffprobe verification still apply.
+        candidate.parsed["manual"] = True
+        return sum(candidate.score.values()), candidate, provider
+
+    def unaired(self, work, episodes):
+        """Episodes with a future or unannounced TMDB air date, by local date."""
+        today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + self.settings.utc_offset_hours * 3600))
+        return {
+            key: work.air_dates[key] for key in episodes
+            if key in work.air_dates and (not work.air_dates[key] or work.air_dates[key] > today)
+        }
+
+    def wait_for_air(self, job, upcoming, **updates):
+        """Sleep until the next episode's air date, re-checking at least weekly."""
+        dates = sorted(date for date in upcoming.values() if date)
+        delay = 86400
+        if dates:
+            year, month, day = (int(part) for part in dates[0].split("-"))
+            start = calendar.timegm((year, month, day, 0, 0, 0)) - self.settings.utc_offset_hours * 3600
+            delay = start - time.time()
         self.db.transition(
-            job["id"], "DOWNLOADING", torrent_hash=torrent_hash, reserved=size, download_started=time.time()
+            job["id"], "WAITING_FOR_RELEASE", "NEXT_EPISODE_NOT_AIRED",
+            delay=max(3600, min(delay, 7 * 86400)), **updates,
         )
-        self.start_torrent(torrent_hash, raw, work)
-        if len(ranked) > 1:
-            self.start_backup(job, work, ranked[1], torrent_hash, committed)
+
+    def timed(self, provider, stage, call):
+        """Run one source request and journal its latency and outcome."""
+        started = time.monotonic()
+        outcome, results = "OK", None
+        try:
+            value = call()
+            if isinstance(value, list):
+                results = len(value)
+            return value
+        except ProviderError as exc:
+            outcome = exc.outcome.value
+            raise
+        except Exception:
+            outcome = "ERROR"
+            raise
+        finally:
+            try:
+                self.db.execute(
+                    "INSERT INTO provider_stats(provider,stage,outcome,latency_ms,results,created) "
+                    "VALUES(:provider,:stage,:outcome,:ms,:results,:now)",
+                    provider=str(provider.config.name), stage=stage, outcome=outcome,
+                    ms=int((time.monotonic() - started) * 1000), results=results, now=time.time(),
+                )
+            except Exception:
+                pass  # Diagnostics never break a search.
 
     # Reasons decided by the release title alone; a card cannot overturn them.
     TITLE_FINAL = frozenset({
@@ -482,7 +789,7 @@ class Worker:
     def search_all(self, provider, work):
         """Search by the title, then once by a Latin-script alias (e.g. the
         original title); both find 'Рус / Eng' releases a single query misses."""
-        results = list(provider.search(work)[:100])
+        results = list(self.timed(provider, "SEARCHING", lambda: provider.search(work))[:100])
         seen = {(r.provider, r.release_id) for r in results}
         wanted = normalize_title(work.title)
         for alias in work.aliases:
@@ -493,7 +800,8 @@ class Worker:
             ):
                 continue
             try:
-                extra = provider.search(work.model_copy(update={"title": alias}))[:100]
+                alias_work = work.model_copy(update={"title": alias})
+                extra = self.timed(provider, "SEARCHING", lambda: provider.search(alias_work))[:100]
             except ProviderError as exc:
                 log.warning(json.dumps({"event": "alias_search_failed", "provider": provider.config.name,
                                         "outcome": exc.outcome.value}))
@@ -768,12 +1076,14 @@ class Worker:
         """Replace a download that would take longer than max_eta_seconds."""
         if elapsed < 2 * self.settings.stall_seconds or float(info.get("progress") or 0) >= 0.5:
             return False
+        if json.loads(job["candidate"] or "{}").get("parsed", {}).get("manual"):
+            return False  # The administrator chose this release; slow is their call.
         if not self.too_long(info, elapsed) or not self.alternatives(job, allow_downgrade=True):
             return False
         self.switch_release(job, "DOWNLOAD_TOO_SLOW", primary_moving=True)
         return True
 
-    def monitor(self, job, work):
+    def monitor(self, job, work, upcoming=None):
         info = self.downloader.info(job["torrent_hash"])
         if info is None:
             self.retry(job, "ADD_OUTCOME_UNCONFIRMED")
@@ -826,33 +1136,18 @@ class Worker:
             raise ValueError("AMBIGUOUS_MEDIA_FILES")
         series_folder = Jellyfin(self.settings).existing_series_folder(work) if work.kind == "series" else None
         self.db.transition(job["id"], "IMPORTING")
-        # All files have been probed before the first publication.
-        for source, data, keys in paths:
-            episode = "+".join(keys) if keys else None
-            destination = destination_for(work, source, self.settings.store, episode, series_folder)
-            self.db.execute(
-                "INSERT OR IGNORE INTO imports(job_id,source,destination,episode,state,probe) "
-                "VALUES(:id,:source,:dest,:episode,'PREPARED',:probe)",
-                id=job["id"],
-                source=str(source),
-                dest=str(destination),
-                episode=episode,
-                probe=json.dumps(data),
-            )
-            journal = self.db.execute("SELECT * FROM imports WHERE destination=:dest", dest=str(destination))[
-                0
-            ]
-            if journal["job_id"] != job["id"] or journal["source"] != str(source):
-                raise ValueError("IMPORT_JOURNAL_COLLISION")
-            if self.db.job(job["id"])["state"] in {"CANCELLED", "NEEDS_REVIEW", "WAITING_FOR_RELEASE"}:
-                return
-            result = publish_hardlink(source, destination, self.settings.store)
-            self.db.execute(
-                "UPDATE imports SET state='PUBLISHED',device=:dev,inode=:ino WHERE id=:id",
-                dev=result.st_dev,
-                ino=result.st_ino,
-                id=journal["id"],
-            )
+        # A better release replaces the movie only after it has been verified.
+        aside = self.set_aside_replaced(job, paths) if job["replacing"] and work.kind == "movie" else []
+        try:
+            published = self.publish(job, work, paths, series_folder)
+        except BaseException:
+            self.restore_replaced(aside)
+            raise
+        if not published:
+            self.restore_replaced(aside)
+            return
+        if job["replacing"]:
+            self.finish_replaced(job, aside)
         published_keys = {key for _, _, keys in paths for key in keys} if work.kind == "series" else {"movie"}
         Jellyfin(self.settings).refresh()
         library_coverage = Jellyfin(self.settings).coverage(work)
@@ -871,8 +1166,92 @@ class Worker:
                 reserved=0,
                 delay=3600,
             )
+        elif upcoming:
+            self.wait_for_air(job, upcoming, torrent_hash=None, candidate=None, reserved=0)
         else:
-            self.db.transition(job["id"], "AVAILABLE", reserved=0)
+            self.db.transition(
+                job["id"], "AVAILABLE", "UPGRADED" if job["replacing"] else None, reserved=0, replacing=0,
+                manual_release=None, upgrade_candidate=None, upgrade_checked=time.time(),
+            )
+
+    def publish(self, job, work, paths, series_folder):
+        """Hardlink every probed file; False if the job changed meanwhile."""
+        for source, data, keys in paths:
+            episode = "+".join(keys) if keys else None
+            destination = destination_for(work, source, self.settings.store, episode, series_folder)
+            self.db.execute(
+                "INSERT OR IGNORE INTO imports(job_id,source,destination,episode,state,probe) "
+                "VALUES(:id,:source,:dest,:episode,'PREPARED',:probe)",
+                id=job["id"],
+                source=str(source),
+                dest=str(destination),
+                episode=episode,
+                probe=json.dumps(data),
+            )
+            journal = self.db.execute("SELECT * FROM imports WHERE destination=:dest", dest=str(destination))[
+                0
+            ]
+            if journal["job_id"] != job["id"] or journal["source"] != str(source):
+                raise ValueError("IMPORT_JOURNAL_COLLISION")
+            if self.db.job(job["id"])["state"] in {"CANCELLED", "NEEDS_REVIEW", "WAITING_FOR_RELEASE"}:
+                return False
+            result = publish_hardlink(source, destination, self.settings.store)
+            self.db.execute(
+                "UPDATE imports SET state='PUBLISHED',device=:dev,inode=:ino WHERE id=:id",
+                dev=result.st_dev,
+                ino=result.st_ino,
+                id=journal["id"],
+            )
+        return True
+
+    REPLACED_SUFFIX = ".aiarr-replaced"
+
+    def set_aside_replaced(self, job, paths):
+        """Rename the library file being replaced; its journal row is kept in memory."""
+        new_sources = {str(source) for source, _, _ in paths}
+        aside = []
+        for row in self.db.execute(
+            "SELECT * FROM imports WHERE job_id=:id AND state='PUBLISHED'", id=job["id"]
+        ):
+            if row["source"] in new_sources:
+                continue  # A retry of this same import, not the old file.
+            path = Path(row["destination"])
+            check_path(path, self.settings.store)
+            try:
+                current = path.lstat()
+            except FileNotFoundError:
+                current = None
+            hidden = None
+            if current is not None:
+                if not stat.S_ISREG(current.st_mode) or (current.st_dev, current.st_ino) != (
+                    row["device"], row["inode"]
+                ):
+                    raise ValueError("IMPORT_INODE_MISMATCH")
+                hidden = path.with_name(path.name + self.REPLACED_SUFFIX)
+                os.rename(path, hidden)
+            self.db.execute("DELETE FROM imports WHERE id=:id", id=row["id"])
+            aside.append((row, path, hidden))
+        return aside
+
+    def restore_replaced(self, aside):
+        for row, path, hidden in aside:
+            if hidden is not None and hidden.exists() and not path.exists():
+                os.rename(hidden, path)
+            self.db.execute(
+                "INSERT OR IGNORE INTO imports(id,job_id,source,destination,episode,state,probe,device,inode) "
+                "VALUES(:id,:job_id,:source,:destination,:episode,:state,:probe,:device,:inode)", **row
+            )
+
+    def finish_replaced(self, job, aside):
+        for _, _, hidden in aside:
+            if hidden is not None and hidden.exists():
+                hidden.unlink()
+        # The old release's torrent only seeds a file no longer in the library.
+        for row in self.db.execute(
+            "SELECT torrent_hash FROM job_downloads WHERE job_id=:id AND torrent_hash!=:current",
+            id=job["id"], current=job["torrent_hash"],
+        ):
+            self.queue_discard(job["id"], row["torrent_hash"])
 
 
 def provider_details_empty():

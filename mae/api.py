@@ -4,6 +4,7 @@ import json
 import re
 import secrets
 import shutil
+import time
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -26,6 +27,11 @@ class ConfigUpdate(BaseModel):
 
 class Mirror(BaseModel):
     base_url: str = Field(pattern=r"^https?://[^\s/]+/?$", max_length=200)
+
+
+class Choice(BaseModel):
+    provider: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,39}$")
+    release_id: str = Field(min_length=1, max_length=200)
 
 
 class Credentials(BaseModel):
@@ -131,21 +137,44 @@ def create_app(settings=None, db=None, seerr=None):
             "(SELECT COUNT(*) FROM episodes e WHERE e.job_id=j.id AND e.monitored=1) wanted,"
             "(SELECT COUNT(*) FROM episodes e WHERE e.job_id=j.id AND e.monitored=1 AND e.available=1) ready,"
             "(SELECT COUNT(*) FROM imports i WHERE i.job_id=j.id AND i.state='PUBLISHED') imported,"
-            "json_extract(j.candidate,'$.image_url') image_url "
+            "json_extract(j.candidate,'$.image_url') image_url,j.replacing,"
+            "json_extract(j.upgrade_candidate,'$.to.resolution') upgrade_resolution,"
+            "json_extract(j.upgrade_candidate,'$.from.resolution') current_resolution,"
+            "json_extract(j.work,'$.air_dates') air_dates "
             "FROM jobs j WHERE j.state!='CANCELLED' ORDER BY j.id DESC"
         )
-        if any(row["torrent_hash"] for row in rows):
-            try:
-                from mae.downloads import Downloader
+        transfer = None
+        try:
+            from mae.downloads import Downloader
 
-                downloader = Downloader(settings)
-                for row in rows:
-                    if row["torrent_hash"]:
-                        torrent = downloader.info(row["torrent_hash"])
-                        row["progress"] = float(torrent["progress"]) if torrent else None
-            except Exception:
-                pass
-        return {"jobs": rows, "dry_run": settings.dry_run}
+            downloader = Downloader(settings)
+            for row in rows:
+                if row["torrent_hash"] and row["state"] != "AVAILABLE":
+                    torrent = downloader.info(row["torrent_hash"])
+                    row["progress"] = float(torrent["progress"]) if torrent else None
+                    if torrent:
+                        row["download_speed"] = int(torrent.get("dlspeed") or 0)
+                        row["eta"] = int(torrent.get("eta") or 0)
+            transfer = downloader.transfer()
+        except Exception:
+            pass
+        try:
+            usage = shutil.disk_usage(settings.store)
+        except OSError:
+            usage = None
+        reserved = db.execute(
+            "SELECT COALESCE(SUM(reserved)+SUM(backup_reserved),0) n FROM jobs WHERE torrent_hash IS NOT NULL "
+            "AND state NOT IN ('AVAILABLE','CANCELLED')"
+        )[0]["n"]
+        return {
+            "jobs": rows, "dry_run": settings.dry_run, "transfer": transfer,
+            "disk": {"free": usage.free, "total": usage.total, "reserve": settings.reserve_bytes,
+                     "committed": reserved} if usage else None,
+            "speed_schedule": {
+                "enabled": settings.speed_schedule_enabled, "from": settings.speed_limited_from_hour,
+                "to": settings.speed_limited_to_hour,
+            },
+        }
 
     @app.get("/admin/jobs/{job_id}")
     def detail(job_id: int):
@@ -305,7 +334,9 @@ def create_app(settings=None, db=None, seerr=None):
 
     @app.get("/admin/config")
     def get_config():
-        return config.snapshot()
+        from mae.parsing import STUDIOS
+
+        return {**config.snapshot(), "known_studios": list(STUDIOS)}
 
     @app.put("/admin/config")
     def put_config(update: ConfigUpdate):
@@ -353,14 +384,104 @@ def create_app(settings=None, db=None, seerr=None):
 
     @app.post("/admin/jobs/{job_id}/retry")
     def retry(job_id: int):
-        if db.job(job_id)["state"] in {"AVAILABLE", "CANCELLED"}:
-            raise HTTPException(409, "Re-request through Seerr; upgrades disabled")
-        db.transition(job_id, "REQUESTED", attempts=0)
+        job = db.job(job_id)
+        if job["replacing"]:
+            # Retrying a failed replacement means keeping the library item.
+            abort_upgrade(job_id)
+            return db.job(job_id)
+        if job["state"] in {"AVAILABLE", "CANCELLED"}:
+            raise HTTPException(409, "Re-request through Seerr")
+        # A retry returns to automatic selection, also after a failed manual choice.
+        db.transition(job_id, "REQUESTED", attempts=0, manual_release=None)
         return db.job(job_id)
+
+    @app.post("/admin/jobs/{job_id}/choose")
+    def choose(job_id: int, payload: Choice):
+        """Download a release the administrator picked from the job's candidates.
+
+        For an available movie this replaces the library file once the new
+        one is verified; until then the old file and its torrent stay.
+        """
+        from mae.worker import Worker
+
+        job = db.job(job_id)
+        listed = list((json.loads(job["decision"] or "{}") or {}).get("candidates") or [])
+        upgrade = (json.loads(job["upgrade_candidate"] or "{}") or {}).get("candidate")
+        if upgrade:
+            listed.append(upgrade)
+        found = next((c for c in listed if (c.get("release") or {}).get("provider") == payload.provider
+                      and (c.get("release") or {}).get("release_id") == payload.release_id), None)
+        if found is None:
+            raise HTTPException(404, "Release is not among this job's candidates")
+        if not Worker.choosable(found):
+            raise HTTPException(409, "Размер, кодек или разрешение этого релиза не пройдут проверку")
+        replacing = job["state"] == "AVAILABLE" or bool(job["replacing"])
+        if replacing and not job["identity"].startswith("movie:"):
+            raise HTTPException(409, "Замена готового сериала не поддерживается")
+        if payload.provider not in {p.name for p in settings.providers}:
+            raise HTTPException(409, "Этот источник больше не подключён")
+        try:
+            db.choose_release(job_id, payload.provider, payload.release_id, replacing=replacing)
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return db.job(job_id)
+
+    @app.post("/admin/jobs/{job_id}/abort-upgrade")
+    def abort_upgrade(job_id: int):
+        try:
+            if not db.abort_replacement(job_id):
+                raise HTTPException(409, "No replacement in progress")
+        except ValueError as exc:
+            raise HTTPException(409, str(exc)) from None
+        return db.job(job_id)
+
+    @app.get("/admin/provider-stats")
+    def provider_stats(days: int = 7):
+        """Per source: request outcomes and latency, useful finds and chosen releases."""
+        since = time.time() - max(1, min(days, 30)) * 86400
+        rows = db.execute(
+            "SELECT provider,stage,outcome,COUNT(*) n,AVG(latency_ms) avg_ms,MAX(created) last FROM provider_stats "
+            "WHERE created>=:since GROUP BY provider,stage,outcome", since=since,
+        )
+        stats = {}
+        for row in rows:
+            entry = stats.setdefault(row["provider"], {
+                "provider": row["provider"], "searches": 0, "cards": 0, "errors": {}, "search_ms": None,
+                "card_ms": None, "last_ok": None, "last_error": None, "fit": 0, "chosen": 0,
+            })
+            stage = "searches" if row["stage"] == "SEARCHING" else "cards"
+            entry[stage] += row["n"]
+            if row["outcome"] == "OK":
+                entry["search_ms" if stage == "searches" else "card_ms"] = round(row["avg_ms"])
+                entry["last_ok"] = max(entry["last_ok"] or 0, row["last"])
+            else:
+                entry["errors"][row["outcome"]] = entry["errors"].get(row["outcome"], 0) + row["n"]
+                if not entry["last_error"] or row["last"] > entry["last_error"]["at"]:
+                    entry["last_error"] = {"at": row["last"], "outcome": row["outcome"], "stage": row["stage"]}
+        for row in db.execute(
+            "SELECT p.provider,p.outcome FROM provider_stats p JOIN (SELECT provider,MAX(id) id FROM provider_stats "
+            "WHERE stage='SEARCHING' GROUP BY provider) last ON last.id=p.id"
+        ):
+            if row["provider"] in stats:
+                stats[row["provider"]]["last_search_outcome"] = row["outcome"]
+        for job in db.execute("SELECT decision,candidate FROM jobs WHERE state!='CANCELLED'"):
+            for candidate in (json.loads(job["decision"] or "{}") or {}).get("candidates") or []:
+                if not candidate.get("reasons") and not candidate.get("unknown"):
+                    name = (candidate.get("release") or {}).get("provider")
+                    if name in stats:
+                        stats[name]["fit"] += 1
+            chosen = (json.loads(job["candidate"] or "{}") or {}).get("release") or {}
+            if chosen.get("provider") in stats:
+                stats[chosen["provider"]]["chosen"] += 1
+        return sorted(stats.values(), key=lambda entry: entry["provider"])
 
     @app.post("/admin/jobs/{job_id}/cancel")
     def cancel(job_id: int):
         job = db.job(job_id)
+        if job["replacing"]:
+            # The request itself was fulfilled; cancelling stops only the replacement.
+            abort_upgrade(job_id)
+            return {"status": "AVAILABLE", "upgrade_cancelled": True}
         db.cancel_from_admin(job_id)
         return {"status": "CANCELLED", "torrent_retained": True, "pause_pending": bool(job["torrent_hash"])}
 

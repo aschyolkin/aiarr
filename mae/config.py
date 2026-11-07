@@ -96,6 +96,8 @@ class Policy(BaseModel):
         "Red Head Sound": 0,
         "Flarrow Films": 0,
     }
+    # Kind of Russian voice-over; the best one present in a release scores.
+    voice_weights: dict[str, int] = {"Dub": 15, "MVO": 10, "DVO": 5, "AVO": 5, "VO": 0}
     upgrades: Literal[False] = False
 
 
@@ -130,6 +132,19 @@ class Settings(BaseSettings):
     min_seeders: int = Field(default=2, ge=0, le=1000)
     min_download_speed: int = Field(default=125_000, ge=0)  # bytes/s, 1 Mbit/s
     max_eta_seconds: int = Field(default=3 * 3600, ge=600)
+    # Re-search available movies for a better release every N hours; 0 = never.
+    upgrade_check_hours: int = Field(default=24, ge=0, le=24 * 90)
+    # Replace without asking once a clearly better release is found.
+    auto_upgrade: bool = False
+    # qBittorrent alternative speed limits between these local hours.
+    speed_schedule_enabled: bool = False
+    speed_limited_from_hour: int = Field(default=8, ge=0, le=23)
+    speed_limited_to_hour: int = Field(default=1, ge=0, le=23)
+    speed_limit_download: int = Field(default=2 * 1024**2, ge=1024)  # bytes/s
+    speed_limit_upload: int = Field(default=512 * 1024, ge=1024)  # bytes/s
+    utc_offset_hours: int = Field(default=3, ge=-12, le=14)
+    # Remove a stopped, fully imported torrent from qBittorrent after N days; 0 = keep.
+    cleanup_after_days: int = Field(default=0, ge=0, le=3650)
 
     @model_validator(mode="after")
     def validate_names(self):

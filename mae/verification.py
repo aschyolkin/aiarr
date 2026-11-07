@@ -77,7 +77,10 @@ def verify(data, policy, expected=None):
         resolution = resolution_class(video.get("width", 0), video.get("height", 0))
         if resolution not in [*policy.resolutions, *policy.fallback_resolutions]:
             raise ValueError("VIDEO_RESOLUTION_BELOW_POLICY")
-        if expected and expected.get("screen_size") != f"{resolution}p":
+        # A manually chosen release may not state its resolution; the policy check above still applies.
+        if expected and (expected.get("screen_size") or not expected.get("manual")) and (
+            expected.get("screen_size") != f"{resolution}p"
+        ):
             raise ValueError("VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE")
         if expected and expected.get("video_codec") and codecs.get(expected["video_codec"]) != video.get("codec_name"):
             raise ValueError("VIDEO_CODEC_DIFFERS_FROM_RELEASE")
