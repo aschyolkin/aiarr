@@ -421,7 +421,15 @@ class Worker:
                 state = "AUTH_REQUIRED"
             self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
             return
-        ranked = sorted(eligible, key=lambda item: self.download_preference(item, slow_keys), reverse=True)
+        wanted = set(work.episodes)
+
+        def coverage(item):
+            # For a series, more of the missing episodes beats a higher resolution.
+            return len(set(episode_keys(item[1].parsed)) & wanted) if work.kind == "series" else 0
+
+        ranked = sorted(
+            eligible, key=lambda item: (coverage(item), *self.download_preference(item, slow_keys)), reverse=True
+        )
         _, candidate, provider = ranked[0]
         if work.kind == "series":
             candidate.parsed["download_episodes"] = work.episodes

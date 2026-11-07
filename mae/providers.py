@@ -12,7 +12,6 @@ from mae.domain import DownloadHandle, Evidence, Outcome, ProviderError, Release
 from mae.enrichment import HTMLDetailsEnricher, RutorDetailsEnricher, card_image
 from mae.security import SafeHTTP, clean_text
 
-
 NON_VIDEO_CATEGORIES = {3, 4, 6, 7}
 
 

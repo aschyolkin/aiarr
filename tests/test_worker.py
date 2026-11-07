@@ -690,3 +690,20 @@ def test_downloads_are_checked_while_a_long_search_runs(settings, db, movie):
     db.execute("UPDATE jobs SET next_run=0 WHERE id=:id", id=downloading)
     worker.process(db.jobs()[-1])
     downloader.info.assert_any_call(_h("first"))
+
+
+def test_series_release_covering_more_missing_episodes_wins_over_resolution(settings, db, monkeypatch):
+    settings = _live(settings, monkeypatch)
+    work = Work(kind="series", external_id=9, title="Example", year=2026, seasons=[1],
+                episodes=[f"S01E0{n}" for n in range(1, 9)])
+    provider = _provider("uhd", "fhd")
+    titles = {"uhd": "Example.S01E01-E02.2160p.WEB-DL.H.265", "fhd": "Example.S01E01-E03.1080p.WEB-DL.H.265"}
+    for release in provider.search.return_value:
+        release.title = titles[release.release_id]
+    monkeypatch.setattr("mae.worker.torrent_metadata", lambda raw, **_: (
+        raw.decode().ljust(40, "0"), 1000,
+        [(f"Example.S01E0{n}.mkv", 1000) for n in range(1, 4 if raw.decode() == "fhd" else 3)],
+    ))
+    job_id = db.submit(work, False)
+    Worker(settings, db, [provider], _downloader({})).tick()
+    assert json.loads(db.job(job_id)["candidate"])["release"]["release_id"] == "fhd"
