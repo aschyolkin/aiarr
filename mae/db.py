@@ -40,6 +40,13 @@ class Database:
                 {"key": key, "work": work.model_dump_json(), "dry": int(dry_run)},
             )
             row = conn.execute(text("SELECT * FROM jobs WHERE identity=:key"), {"key": key}).mappings().one()
+            previous_aliases = json.loads(row["work"]).get("aliases", [])
+            if work.kind == "movie" and set(work.aliases) - set(previous_aliases):
+                # New search names (e.g. an English title) reach existing jobs too.
+                stored = json.loads(row["work"])
+                stored["aliases"] = [*previous_aliases, *[a for a in work.aliases if a not in previous_aliases]]
+                conn.execute(text("UPDATE jobs SET work=:work WHERE id=:id"),
+                             {"work": json.dumps(stored, ensure_ascii=False), "id": row["id"]})
             if work.kind == "series":
                 previous = json.loads(row["work"])
                 merged = work.model_copy(

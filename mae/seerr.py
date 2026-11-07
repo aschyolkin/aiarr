@@ -1,4 +1,5 @@
 import re
+import time
 
 import httpx
 
@@ -8,6 +9,14 @@ from mae.domain import Work
 def poster(detail):
     value = detail.get("posterPath")
     return value if isinstance(value, str) and re.fullmatch(r"/[A-Za-z0-9_.-]{1,199}", value) else None
+
+
+# Seerr proxies TMDB; reconciliation runs every minute for every approved
+# request, but titles and episode lists change on a scale of hours.
+_METADATA_CACHE = {}
+METADATA_TTL = 3600
+# Trackers name foreign films by their English title, not e.g. Korean script.
+ENGLISH_TITLE_LANGUAGES = {"en", "ru"}
 
 
 class Seerr:
@@ -50,25 +59,48 @@ class Seerr:
                 return None
             raise
 
+    def metadata(self, path, **params):
+        key = (self.settings.seerr_url, path, tuple(sorted(params.items())))
+        cached = _METADATA_CACHE.get(key)
+        if cached and cached[0] > time.monotonic():
+            return cached[1]
+        data = self.get(path, **params)
+        if len(_METADATA_CACHE) >= 512:
+            _METADATA_CACHE.clear()
+        _METADATA_CACHE[key] = (time.monotonic() + METADATA_TTL, data)
+        return data
+
     def work(self, request):
         media = request["media"]
         kind = "movie" if request["type"] == "movie" else "series"
         tmdb = media["tmdbId"]
-        detail = self.get(f"/{'movie' if kind == 'movie' else 'tv'}/{tmdb}")
+        path = f"/{'movie' if kind == 'movie' else 'tv'}/{tmdb}"
+        detail = self.metadata(path)
         seasons = [s["seasonNumber"] for s in request.get("seasons", []) if s.get("status") == 2]
         episodes = []
         if kind == "series":
             for season in seasons:
-                season_data = self.get(f"/tv/{tmdb}/season/{season}")
+                season_data = self.metadata(f"/tv/{tmdb}/season/{season}")
                 episodes.extend(f"S{season:02d}E{ep['episodeNumber']:02d}" for ep in season_data["episodes"])
         date = detail.get("releaseDate") or detail.get("firstAirDate") or ""
+        title = detail.get("title") or detail["name"]
+        aliases = [v for v in [detail.get("originalTitle"), detail.get("originalName")] if v]
+        language = detail.get("originalLanguage")
+        if language and language not in ENGLISH_TITLE_LANGUAGES:
+            try:
+                english = self.metadata(path, language="en")
+                value = english.get("title") or english.get("name")
+                if isinstance(value, str) and value.strip() and value not in (title, *aliases):
+                    aliases.append(value.strip()[:250])
+            except httpx.HTTPError:
+                pass  # An extra search name only; never blocks the request.
         return Work(
             kind=kind,
             external_id=tmdb if kind == "movie" else media["tvdbId"],
-            title=detail.get("title") or detail["name"],
-            aliases=[v for v in [detail.get("originalTitle"), detail.get("originalName")] if v],
+            title=title,
+            aliases=aliases,
             year=int(date[:4]) if date else None,
-            original_language=detail.get("originalLanguage"),
+            original_language=language,
             seasons=seasons,
             episodes=episodes,
             poster_path=poster(detail),

@@ -25,3 +25,12 @@ def db(settings):
 @pytest.fixture
 def movie():
     return Work(kind="movie", external_id=1, title="Example", year=2024)
+
+
+@pytest.fixture(autouse=True)
+def _fresh_seerr_metadata_cache():
+    from mae import seerr
+
+    seerr._METADATA_CACHE.clear()
+    yield
+    seerr._METADATA_CACHE.clear()
