@@ -16,7 +16,7 @@ from mae.downloads import Downloader, safe_relative, torrent_metadata
 from mae.errors import failure
 from mae.importing import destination_for
 from mae.jellyfin import Jellyfin
-from mae.parsing import episode_keys, parse_candidate
+from mae.parsing import apply_resolution_claims, episode_keys, normalize_title, parse_candidate
 from mae.policies import evaluate
 from mae.providers import make_provider
 from mae.verification import check_path, probe, publish_hardlink, verify
@@ -26,6 +26,8 @@ log = logging.getLogger("mae")
 
 class Worker:
     dependency_retry_seconds = 300
+    monitor_interval = 30
+    last_monitor = 0.0
 
     def __init__(self, settings, db=None, providers=None, downloader=None):
         self.settings = settings
@@ -42,6 +44,9 @@ class Worker:
                 fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             except BlockingIOError:
                 return False
+            # Due downloads are handled by this tick's own loop; searches only
+            # interleave checks once they have run longer than monitor_interval.
+            self.last_monitor = time.monotonic()
             self.release_idle_backups()
             self.discard_downloads()
             self.pause_stopped_downloads()
@@ -56,31 +61,45 @@ class Worker:
                 now=time.time(),
             )
             for job in jobs:
-                try:
-                    self.process(job)
-                except ProviderError as exc:
-                    if exc.outcome in {Outcome.AUTH_REQUIRED, Outcome.ACCESS_DENIED}:
-                        self.db.transition(job["id"], "AUTH_REQUIRED", exc.outcome.value)
-                    else:
-                        self.retry(job, exc.outcome.value, exc.retry_after)
-                except (ValueError, FileNotFoundError) as exc:
-                    # Exceptions are only persisted as bounded codes, never URLs/bodies.
-                    code = str(exc) if re.fullmatch(r"[A-Z_]{1,80}", str(exc)) else type(exc).__name__
-                    self.db.transition(job["id"], "NEEDS_REVIEW", code)
-                except Exception as exc:
-                    code, dependency = failure(exc, self.settings)
-                    if dependency:
-                        # Our own service is down: wait for it without spending the job's attempts.
-                        self.db.transition(job["id"], "RETRY_SCHEDULED", code, delay=self.dependency_retry_seconds)
-                    else:
-                        self.retry(job, code)
-                    log.warning(json.dumps({"event": "job_failed", "job": job["id"], "code": code}))
-                log.info(
-                    json.dumps(
-                        {"event": "job_tick", "job": job["id"], "state": self.db.job(job["id"])["state"]}
-                    )
-                )
+                self.run_job(job)
             return True
+
+    def run_job(self, job):
+        current = self.db.job(job["id"])
+        # A download may already have been checked while another job searched.
+        if current["state"] != job["state"] or current["next_run"] > time.time():
+            return
+        try:
+            self.process(job)
+        except ProviderError as exc:
+            if exc.outcome in {Outcome.AUTH_REQUIRED, Outcome.ACCESS_DENIED}:
+                self.db.transition(job["id"], "AUTH_REQUIRED", exc.outcome.value)
+            else:
+                self.retry(job, exc.outcome.value, exc.retry_after)
+        except (ValueError, FileNotFoundError) as exc:
+            # Exceptions are only persisted as bounded codes, never URLs/bodies.
+            code = str(exc) if re.fullmatch(r"[A-Z_]{1,80}", str(exc)) else type(exc).__name__
+            self.db.transition(job["id"], "NEEDS_REVIEW", code)
+        except Exception as exc:
+            code, dependency = failure(exc, self.settings)
+            if dependency:
+                # Our own service is down: wait for it without spending the job's attempts.
+                self.db.transition(job["id"], "RETRY_SCHEDULED", code, delay=self.dependency_retry_seconds)
+            else:
+                self.retry(job, code)
+            log.warning(json.dumps({"event": "job_failed", "job": job["id"], "code": code}))
+        log.info(json.dumps({"event": "job_tick", "job": job["id"], "state": self.db.job(job["id"])["state"]}))
+
+    def monitor_downloads(self, searching_job_id):
+        """Check due downloads between card fetches so a long search never delays them."""
+        if time.monotonic() - self.last_monitor < self.monitor_interval:
+            return
+        self.last_monitor = time.monotonic()
+        for job in self.db.execute(
+            "SELECT * FROM jobs WHERE torrent_hash IS NOT NULL AND next_run<=:now AND id!=:id AND state IN "
+            "('DOWNLOADING','RETRY_SCHEDULED')", now=time.time(), id=searching_job_id,
+        ):
+            self.run_job(job)
 
     def pause_stopped_downloads(self):
         for job in self.db.downloads_to_pause():
@@ -310,16 +329,16 @@ class Worker:
         for provider in self.providers:
             stage = "SEARCHING"
             try:
-                results = provider.search(work)
+                results = self.search_all(provider, work)
                 stage = "ENRICHING"
-                for index, release in enumerate(results[:100]):
-                    # Expand beyond the initial sample only while no proven match exists.
-                    if selected and index >= self.settings.enrichment_limit:
-                        break
+                viable = []
+                for release in results:
                     preliminary = evaluate(
                         parse_candidate(release, provider_details_empty()), work, self.settings.policy
                     )
-                    if "IDENTITY_MISMATCH" in preliminary.reasons or "SEASON_MISMATCH" in preliminary.reasons:
+                    if self.card_cannot_help(preliminary):
+                        # Size, year, season, source or a title that is not this work:
+                        # no release card can change that, so skip its request.
                         decisions.append(preliminary.model_dump())
                         continue
                     if (release.provider, release.release_id) in stalled:
@@ -327,6 +346,14 @@ class Worker:
                         decisions.append(preliminary.model_dump())
                         skipped_stalled = True
                         continue
+                    viable.append((self.enrichment_priority(preliminary), release))
+                # Most promising cards first, so enrichment_limit is spent on them.
+                viable.sort(key=lambda item: item[0], reverse=True)
+                for index, (_, release) in enumerate(viable):
+                    # Expand beyond the initial sample only while no proven match exists.
+                    if selected and index >= self.settings.enrichment_limit:
+                        break
+                    self.monitor_downloads(job["id"])
                     self.db.transition(job["id"], "ENRICHING")
                     details = provider.fetch_details(release)
                     parsed_candidate = parse_candidate(release, details)
@@ -338,11 +365,12 @@ class Worker:
                         )
                         if interpretation:
                             # Claims carry exact evidence quotes; ffprobe re-checks
-                            # codec and Russian audio in the downloaded file.
+                            # codec, resolution and Russian audio in the downloaded file.
                             parsed_candidate.claims.extend(interpretation.claims)
                             codecs = {c.value for c in interpretation.claims if c.field == "video_codec"}
                             if len(codecs) == 1 and not parsed_candidate.parsed.get("video_codec"):
                                 parsed_candidate.parsed["video_codec"] = next(iter(codecs))
+                            apply_resolution_claims(parsed_candidate)
                             candidate = evaluate(parsed_candidate, work, self.settings.policy)
                     decisions.append(candidate.model_dump())
                     publish_progress()
@@ -423,6 +451,48 @@ class Worker:
         self.start_torrent(torrent_hash, raw, work)
         if len(ranked) > 1:
             self.start_backup(job, work, ranked[1], torrent_hash, committed)
+
+    # Reasons decided by the release title alone; a card cannot overturn them.
+    TITLE_FINAL = frozenset({
+        "IDENTITY_MISMATCH", "SEASON_MISMATCH", "EPISODE_MISMATCH", "YEAR_UNVERIFIED", "NOT_A_MOVIE",
+        "NOT_VIDEO_RELEASE", "SOURCE_NOT_ALLOWED", "TOO_LARGE", "FILE_TOO_LARGE", "VIDEO_CODEC_NOT_ALLOWED",
+    })
+
+    def card_cannot_help(self, preliminary):
+        if set(preliminary.reasons) & self.TITLE_FINAL:
+            return True
+        # A card can only supply a resolution the title does not state.
+        return "RESOLUTION_NOT_ALLOWED" in preliminary.reasons and bool(preliminary.parsed.get("screen_size"))
+
+    def enrichment_priority(self, preliminary):
+        """Preferred resolution, then unlabeled, then fallback; Russian marker; seeders."""
+        size = str(preliminary.parsed.get("screen_size") or "")
+        tier = 2 if size in {f"{n}p" for n in self.settings.policy.resolutions} else 1 if not size else 0
+        russian = any(c.field == "audio_language" for c in preliminary.claims)
+        return tier, russian, preliminary.release.seeders or 0
+
+    def search_all(self, provider, work):
+        """Search by the title, then once by a Latin-script alias (e.g. the
+        original title); both find 'Рус / Eng' releases a single query misses."""
+        results = list(provider.search(work)[:100])
+        seen = {(r.provider, r.release_id) for r in results}
+        wanted = normalize_title(work.title)
+        for alias in work.aliases:
+            if (
+                normalize_title(alias) in ("", wanted)
+                or not re.search(r"[A-Za-z]", alias)
+                or re.search(r"[А-Яа-яЁё]", alias)
+            ):
+                continue
+            try:
+                extra = provider.search(work.model_copy(update={"title": alias}))[:100]
+            except ProviderError as exc:
+                log.warning(json.dumps({"event": "alias_search_failed", "provider": provider.config.name,
+                                        "outcome": exc.outcome.value}))
+                break
+            results.extend(r for r in extra if (r.provider, r.release_id) not in seen)
+            break
+        return results
 
     def download_preference(self, item, slow_keys=frozenset()):
         """Preferred resolution, then enough seeders (unknown in between), score, seeders.

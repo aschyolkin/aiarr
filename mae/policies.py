@@ -7,16 +7,20 @@ def _words(value):
     return re.findall(r"\w+", value.casefold())
 
 
-def title_matches(title, work, year):
-    """Exact normalized match, or for a movie of the right year every word of a
-    title/alias of at least three words appearing in the release title."""
+def title_matches(title, work, year, release_names=()):
+    """Exact normalized match of the parsed title or any 'Рус / Eng' name part,
+    or for a movie of the right year every word of a title/alias of at least
+    three words appearing in one of them."""
     names = [work.title, *work.aliases]
-    if normalize_title(title) in {normalize_title(t) for t in names}:
+    wanted = {normalize_title(t) for t in names}
+    candidates = [t for t in (title, *release_names) if isinstance(t, str) and t]
+    if any(normalize_title(t) in wanted for t in candidates):
         return True
     if work.kind != "movie" or work.year is None or year != work.year:
         return False
-    words = set(_words(title))
-    return any(len(_words(name)) >= 3 and set(_words(name)) <= words for name in names)
+    return any(
+        len(_words(name)) >= 3 and set(_words(name)) <= set(_words(t)) for name in names for t in candidates
+    )
 
 
 def evaluate(candidate, work, policy):
@@ -24,8 +28,10 @@ def evaluate(candidate, work, policy):
     c.reasons, c.unknown, c.score = [], [], {}
     p = c.parsed
     title = p.get("title", "")
-    if not isinstance(title, str) or not title_matches(title, work, p.get("year")):
+    if not title_matches(title if isinstance(title, str) else "", work, p.get("year"), p.get("names") or ()):
         c.reasons.append("IDENTITY_MISMATCH")
+    if p.get("not_video"):
+        c.reasons.append("NOT_VIDEO_RELEASE")
     if work.kind == "movie":
         if p.get("year") != work.year or work.year is None:
             c.reasons.append("YEAR_UNVERIFIED")

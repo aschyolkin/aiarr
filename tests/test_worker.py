@@ -621,10 +621,72 @@ def test_deepseek_claims_and_unlabeled_codec_allow_selection(settings, db, movie
 
 def test_release_title_alone_is_sent_to_deepseek(settings, db, movie, monkeypatch):
     provider = _provider("kinozal")
-    provider.search.return_value[0].title = "Example 2024 MVO WEBDL 1080p - RUSSIAN"
+    provider.search.return_value[0].title = "Example 2024 WEBDL 1080p - RUSSIAN"
     provider.fetch_details.return_value = ReleaseDetails()
     seen = []
     monkeypatch.setattr("mae.worker.DeepSeek.interpret", lambda _self, evidence, **_k: seen.append(evidence))
     db.submit(movie)
     Worker(settings, db, [provider], Mock()).tick()
     assert [e.id for e in seen[0]] == ["title"]
+
+
+def test_tracker_translation_marker_in_title_needs_no_deepseek(settings, db, movie, monkeypatch):
+    provider = _provider("kinozal")
+    provider.search.return_value[0].title = "Example (2024) WEB-DL 1080p | MVO"
+    provider.fetch_details.return_value = ReleaseDetails()
+    seen = []
+    monkeypatch.setattr("mae.worker.DeepSeek.interpret", lambda _self, evidence, **_k: seen.append(evidence))
+    job_id = db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    assert not seen
+    assert db.job(job_id)["reason"] == "DRY_RUN_SELECTED"
+
+
+def test_card_is_not_fetched_for_a_release_its_title_already_rules_out(settings, db, movie):
+    provider = _provider("huge", "ok")
+    provider.search.return_value[0].size = settings.policy.max_bytes + 1
+    db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    fetched = [call.args[0].release_id for call in provider.fetch_details.call_args_list]
+    assert fetched == ["ok"]
+
+
+def test_cards_are_fetched_best_resolution_and_most_seeders_first(settings, db, movie):
+    provider = _provider("sd", "few", "many")
+    titles = {"sd": "Example.2024.720p.WEB-DL.H.264", "few": "Example.2024.1080p.WEB-DL.H.264",
+              "many": "Example.2024.1080p.WEB-DL.H.264"}
+    for release in provider.search.return_value:
+        release.title = titles[release.release_id]
+        release.seeders = 50 if release.release_id == "many" else 1
+    db.submit(movie)
+    Worker(settings, db, [provider], Mock()).tick()
+    fetched = [call.args[0].release_id for call in provider.fetch_details.call_args_list]
+    assert fetched == ["many", "few", "sd"]
+
+
+def test_latin_alias_is_searched_once_and_results_are_deduplicated(settings, db):
+    work = Work(kind="movie", external_id=152601, title="Она", aliases=["Her"], year=2013)
+    provider = _provider("same")
+    provider.search.side_effect = lambda query: [
+        SearchResult(provider="fixture", release_id="same", title="Она / Her (2013) 1080p WEB-DL H.264", size=1000),
+        *([SearchResult(provider="fixture", release_id="eng", title="Her.2013.1080p.WEB-DL.H.264", size=1000)]
+          if query.title == "Her" else []),
+    ]
+    db.submit(work)
+    Worker(settings, db, [provider], Mock()).tick()
+    assert [call.args[0].title for call in provider.search.call_args_list] == ["Она", "Her"]
+    fetched = sorted(call.args[0].release_id for call in provider.fetch_details.call_args_list)
+    assert fetched == ["eng", "same"]
+
+
+def test_downloads_are_checked_while_a_long_search_runs(settings, db, movie):
+    downloading = _racing(db, Work(kind="movie", external_id=2, title="Other", year=2024))
+    db.execute("UPDATE jobs SET backup_hash=NULL,next_run=:later WHERE id=:id", later=time.time() + 3600,
+               id=downloading)
+    db.submit(movie)
+    downloader = _downloader({_h("first"): _torrent(progress=0.5, added_on=time.time())})
+    worker = Worker(settings, db, [_provider("a", "b")], downloader)
+    worker.monitor_interval = 0
+    db.execute("UPDATE jobs SET next_run=0 WHERE id=:id", id=downloading)
+    worker.process(db.jobs()[-1])
+    downloader.info.assert_any_call(_h("first"))

@@ -49,6 +49,14 @@ def probe(path, root):
     return json.loads(result.stdout)
 
 
+def resolution_class(width, height):
+    """Nominal resolution of a frame; cinematic releases crop edges and letterbox height."""
+    return 2160 if width >= 3800 and height >= 1560 else (
+        1080 if width >= 1900 and height >= 780 else
+        720 if width >= 1260 and height >= 500 else None
+    )
+
+
 def verify(data, policy, expected=None):
     streams = data.get("streams", [])
     videos = [
@@ -66,12 +74,7 @@ def verify(data, policy, expected=None):
     if any(v.get("width", 0) > 4096 or v.get("height", 0) > 2160 for v in videos):
         raise ValueError("VIDEO_DIMENSIONS_UNSUPPORTED")
     for video in videos:
-        width = video.get("width", 0)
-        # Cinematic releases may crop a few edge pixels and letterbox height.
-        resolution = 2160 if width >= 3800 and video.get("height", 0) >= 1560 else (
-            1080 if width >= 1900 and video.get("height", 0) >= 780 else
-            720 if width >= 1260 and video.get("height", 0) >= 500 else None
-        )
+        resolution = resolution_class(video.get("width", 0), video.get("height", 0))
         if resolution not in [*policy.resolutions, *policy.fallback_resolutions]:
             raise ValueError("VIDEO_RESOLUTION_BELOW_POLICY")
         if expected and expected.get("screen_size") != f"{resolution}p":
