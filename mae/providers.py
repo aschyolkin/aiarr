@@ -13,6 +13,9 @@ from mae.enrichment import HTMLDetailsEnricher, RutorDetailsEnricher, card_image
 from mae.security import SafeHTTP, clean_text
 
 
+NON_VIDEO_CATEGORIES = {3, 4, 6, 7}
+
+
 class TorznabProvider:
     def __init__(self, config: ProviderConfig, http=None):
         self.config = config
@@ -83,6 +86,15 @@ class TorznabProvider:
             # GUID can be a private URL; persist an opaque digest instead.
             rid = hashlib.sha256(guid.encode()).hexdigest()
             attrs = {a.get("name"): a.get("value") for a in item if a.tag.endswith("}attr")}
+            categories = [
+                int(a.get("value")) for a in item
+                if a.tag.endswith("}attr") and a.get("name") == "category" and (a.get("value") or "").isdigit()
+            ]
+            standard = [c for c in categories if c < 100000]
+            # Torznab Audio/PC/XXX/Books are never a film or series. Video
+            # categories are not trusted: trackers file cartoons under Movies.
+            if standard and all(c // 1000 in NON_VIDEO_CATEGORIES for c in standard):
+                continue
             raw_size = attrs.get("size") or (enclosure.get("length") if enclosure is not None else None)
             raw_peers = attrs.get("seeders")
             size = int(raw_size) if raw_size and raw_size.isdigit() else None

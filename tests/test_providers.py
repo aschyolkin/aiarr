@@ -140,3 +140,25 @@ def test_new_protocol_same_contract(respx_mock, movie):
     p = JSONProvider(config)
     r = p.search(movie)[0]
     assert p.fetch_details(r).evidence and p.resolve_download(r)
+
+
+def test_torznab_skips_audio_books_and_software_categories(respx_mock):
+    import httpx
+
+    from mae.config import ProviderConfig
+    from mae.domain import Work
+    from mae.providers import TorznabProvider
+
+    config = ProviderConfig(name="fixture", url="http://gateway.test/api", trusted_gateway=True, interval=0)
+    ns = 'xmlns:torznab="http://torznab.com/schemas/2015/feed"'
+
+    def item(guid, *cats):
+        attrs = "".join(f'<torznab:attr name="category" value="{c}"/>' for c in cats)
+        return (f"<item><title>Она {guid}</title><guid>{guid}</guid>"
+                f'<enclosure url="http://gateway.test/{guid}" length="1"/>{attrs}</item>')
+
+    xml = (f"<rss {ns}><channel>{item('mp3', 3060, 100043)}{item('book', 7020)}"
+           f"{item('cartoon', 2000, 100020)}{item('series', 5000)}{item('custom', 100099)}</channel></rss>")
+    respx_mock.get(config.url).mock(return_value=httpx.Response(200, text=xml))
+    results = TorznabProvider(config).search(Work(kind="movie", external_id=1, title="Она"))
+    assert [r.title for r in results] == ["Она cartoon", "Она series", "Она custom"]
