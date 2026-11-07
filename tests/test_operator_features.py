@@ -366,3 +366,14 @@ def test_recent_torrent_is_kept(db, library_movie):
     downloader.info.return_value = {"progress": 1, "save_path": str(downloads), "completion_on": time.time()}
     Worker(settings, db, [], downloader).tick()
     downloader.delete_owned.assert_not_called()
+
+
+def test_full_download_queue_does_not_search(settings, db, movie, empty_library):
+    settings = settings.model_copy(update={"dry_run": False, "max_downloads": 1})
+    busy = db.submit(Work(kind="movie", external_id=2, title="Other", year=2024), False)
+    db.transition(busy, "DOWNLOADING", torrent_hash="e" * 40, delay=3600)
+    job_id = db.submit(movie, False)
+    provider = fake_provider([release("Example.2024.1080p.WEB-DL.H.264")])
+    Worker(settings, db, [provider], Mock()).tick()
+    assert (db.job(job_id)["state"], db.job(job_id)["reason"]) == ("RETRY_SCHEDULED", "DOWNLOAD_QUEUE_LIMIT")
+    provider.search.assert_not_called()

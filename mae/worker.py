@@ -494,6 +494,11 @@ class Worker:
         if not self.providers:
             self.db.transition(job["id"], "AUTH_REQUIRED", "NO_CONFIGURED_PROVIDERS")
             return
+        if not (job["dry_run"] or self.settings.dry_run) and self.queue_full():
+            # Searching now would only repeat every source request each minute
+            # until a download slot frees up; the search waits instead.
+            self.db.transition(job["id"], "RETRY_SCHEDULED", "DOWNLOAD_QUEUE_LIMIT", delay=60)
+            return
         self.db.execute(
             "INSERT INTO attempts(job_id,created,state) VALUES(:id,:now,'SEARCHING')",
             id=job["id"],
@@ -571,6 +576,11 @@ class Worker:
         self.start_torrent(torrent_hash, raw, work)
         if len(ranked) > 1:
             self.start_backup(job, work, ranked[1], torrent_hash, committed)
+
+    def queue_full(self):
+        return self.db.execute(
+            "SELECT COUNT(*) n FROM jobs WHERE torrent_hash IS NOT NULL AND state NOT IN ('AVAILABLE','CANCELLED')"
+        )[0]["n"] >= self.settings.max_downloads
 
     def rank(self, eligible, work, job_id):
         wanted = set(work.episodes)
