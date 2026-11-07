@@ -13,6 +13,7 @@ from mae.db import Database
 from mae.deepseek import DeepSeek
 from mae.domain import Outcome, ProviderError, Work
 from mae.downloads import Downloader, safe_relative, torrent_metadata
+from mae.errors import failure
 from mae.importing import destination_for
 from mae.jellyfin import Jellyfin
 from mae.parsing import episode_keys, parse_candidate
@@ -24,6 +25,8 @@ log = logging.getLogger("mae")
 
 
 class Worker:
+    dependency_retry_seconds = 300
+
     def __init__(self, settings, db=None, providers=None, downloader=None):
         self.settings = settings
         self.db = db or Database(settings.state_dir)
@@ -65,7 +68,13 @@ class Worker:
                     code = str(exc) if re.fullmatch(r"[A-Z_]{1,80}", str(exc)) else type(exc).__name__
                     self.db.transition(job["id"], "NEEDS_REVIEW", code)
                 except Exception as exc:
-                    self.retry(job, type(exc).__name__)
+                    code, dependency = failure(exc, self.settings)
+                    if dependency:
+                        # Our own service is down: wait for it without spending the job's attempts.
+                        self.db.transition(job["id"], "RETRY_SCHEDULED", code, delay=self.dependency_retry_seconds)
+                    else:
+                        self.retry(job, code)
+                    log.warning(json.dumps({"event": "job_failed", "job": job["id"], "code": code}))
                 log.info(
                     json.dumps(
                         {"event": "job_tick", "job": job["id"], "state": self.db.job(job["id"])["state"]}
@@ -209,7 +218,7 @@ class Worker:
                         {
                             "event": "library_reconciliation_failed",
                             "job": job["id"],
-                            "type": type(exc).__name__,
+                            "code": failure(exc, self.settings)[0],
                         }
                     )
                 )

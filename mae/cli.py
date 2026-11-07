@@ -8,6 +8,7 @@ from alembic.config import Config
 
 from mae.config import Settings
 from mae.db import Database
+from mae.errors import failure
 from mae.runtime_config import RuntimeConfig
 from mae.seerr import Seerr
 from mae.worker import Worker
@@ -50,7 +51,7 @@ def main():
                 try:
                     Seerr(current).reconcile(db, current.dry_run)
                 except Exception as exc:
-                    logging.warning('{"event":"reconciliation_failed","type":"%s"}', type(exc).__name__)
+                    logging.warning('{"event":"reconciliation_failed","code":"%s"}', failure(exc, current)[0])
                 last_reconcile = time.monotonic()
             worker.tick()
             if args.command == "once":

@@ -258,7 +258,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  PROVIDER_SEARCH_FAILED:'Источник не ответил на поиск',PROVIDER_ENRICHMENT_FAILED:'Не удалось открыть карточку релиза',
  LIBRARY_ITEM_MISSING:'Файл пропал из Jellyfin',EPISODE_MONITORING_CHANGED:'Изменён список отслеживаемых серий',
  NO_MONITORED_EPISODES:'Нет отслеживаемых серий'};
-const candidateReasons={VIDEO_CODEC_NOT_ALLOWED:'кодек не из списка',FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
+const candidateReasons={NOT_VIDEO_RELEASE:'не видео (книга, музыка, игра)',VIDEO_CODEC_NOT_ALLOWED:'кодек не из списка',FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
  SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
  CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',
@@ -310,7 +310,9 @@ function renderCandidates(decision,chosen){
  }
 }
 const labelState=value=>states[value]||value;
-const labelReason=value=>reasons[value]||value||'';
+const services={JELLYFIN:'Jellyfin',SEERR:'Seerr',QBITTORRENT:'qBittorrent',UPSTREAM:'Внешний сервис'};
+const labelFailure=value=>{const m=/^(JELLYFIN|SEERR|QBITTORRENT|UPSTREAM)_(?:HTTP_([0-9]{3})|(UNREACHABLE)|(TIMEOUT))$/.exec(value||'');if(!m)return null;return services[m[1]]+(m[2]?' ответил ошибкой HTTP '+m[2]:m[3]?' недоступен':' не ответил вовремя')+(m[1]==='UPSTREAM'?'':' — задача ждёт, попытки не расходуются');};
+const labelReason=value=>reasons[value]||labelFailure(value)||value||'';
 function appendStep(text,created){
  const li=document.createElement('li');li.textContent=text;
  if(created){const time=document.createElement('time');time.dateTime=new Date(created*1000).toISOString();
