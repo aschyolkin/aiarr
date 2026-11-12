@@ -609,26 +609,43 @@ def create_app(settings=None, db=None, seerr=None):
     def find_series(name):
         """Name search for Seerr's "match this series" dialog (a show TMDB has no TVDB id for).
 
+        Seerr sends only the English title, so the English search is used and a show whose name is
+        exactly that title, and which has no TVDB id (the reason for the dialog), comes first.
         The tvdbId handed out is the TMDB id plus an offset; Seerr stores it and aiarr reads it back.
         """
+        query = quote(name[:200], safe="")  # Seerr rejects "+" for spaces, so encode by hand.
+        found = []
         try:
-            # Seerr rejects "+" for spaces in the query string, so it is percent-encoded by hand.
-            found = seerr.get("/search?query=" + quote(name[:200], safe="") + "&page=1").get("results", [])
+            for page in (1, 2):
+                found += seerr.get(f"/search?query={query}&page={page}&language=en").get("results", [])
         except Exception:
-            raise HTTPException(502, "Seerr search failed") from None
+            if not found:
+                raise HTTPException(502, "Seerr search failed") from None
+        shows = list({i["id"]: i for i in found
+                      if i.get("mediaType") == "tv" and type(i.get("id")) is int and i.get("name")}.values())
+
+        def rank(item):
+            exact = item["name"].casefold() == name.strip().casefold()
+            if not exact:
+                return 2
+            try:
+                missing = not seerr.metadata(f"/tv/{item['id']}").get("externalIds", {}).get("tvdbId")
+            except Exception:
+                missing = False
+            return 0 if missing else 1
+
         series = []
-        for item in found:
-            if item.get("mediaType") != "tv" or type(item.get("id")) is not int or not item.get("name"):
-                continue
+        for item in sorted(shows[:20], key=rank)[:6]:
             date = item.get("firstAirDate") or ""
             poster = item.get("posterPath") or ""
             series.append({
                 "title": item["name"], "year": int(date[:4]) if date[:4].isdigit() else 0,
                 "overview": item.get("overview") or "", "tvdbId": TMDB_SERIES_OFFSET + item["id"],
                 "tmdbId": item["id"], "seasons": [], "monitored": False,
-                "remotePoster": "https://image.tmdb.org/t/p/w185" + poster if re.fullmatch(r"/[A-Za-z0-9_.-]+", poster) else None,
+                "remotePoster": "https://image.tmdb.org/t/p/w185" + poster
+                if re.fullmatch(r"/[A-Za-z0-9_.-]+", poster) else None,
             })
-        return series[:6]
+        return series
 
     def render(work, job=None):
         imports = (

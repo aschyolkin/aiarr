@@ -454,3 +454,18 @@ def test_series_without_tvdb_id_is_matched_by_name_and_kept_by_tmdb_id(settings,
     assert (work.library_namespace, work.library_id) == ("tmdbid", 477295)
     assert Work(kind="series", external_id=99, title="x").library_namespace == "tvdbid"
     assert Work(kind="movie", external_id=5, title="x").library_namespace == "tmdbid"
+
+
+def test_name_match_prefers_the_exact_show_without_a_tvdb_id(settings, db):
+    seerr = Mock()
+    seerr.get.return_value = {"results": [
+        {"mediaType": "tv", "id": 1, "name": "Beauty Queens"},
+        {"mediaType": "tv", "id": 2, "name": "Beauty"},
+        {"mediaType": "tv", "id": 3, "name": "Beauty"},
+    ]}
+    seerr.metadata.side_effect = lambda path: {"externalIds": {"tvdbId": 55 if path.endswith("/2") else None}}
+    client = TestClient(create_app(settings, db, seerr=seerr),
+                        headers={"X-Api-Key": settings.api_key.get_secret_value()})
+    found = client.get("/sonarr/api/v3/series/lookup", params={"term": "Beauty"}).json()
+    assert [i["tmdbId"] for i in found] == [3, 2, 1]
+    assert "language=en" in seerr.get.call_args_list[0].args[0]
