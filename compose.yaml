@@ -8,12 +8,14 @@ x-common: &common
     MAE_STATE_DIR: /state
   volumes:
     - ${MAE_STATE_HOST:?set persistent state directory}:/state
-    - /mnt/data/store:/data/store
+    - ${MAE_STORE_HOST:?set the media root directory}:/data/store
   read_only: true
   tmpfs:
     - /tmp:size=64m,mode=1777
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
+  # Lets services on the Docker host be reached as http://host.docker.internal:PORT.
+  extra_hosts: ["host.docker.internal:host-gateway"]
   cpus: 2
   mem_limit: 1g
   pids_limit: 128
@@ -28,9 +30,9 @@ services:
     restart: unless-stopped
     volumes:
       - ${MAE_STATE_HOST:?set persistent state directory}:/state
-      - /mnt/data/store:/data/store:ro
+      - ${MAE_STORE_HOST:?set the media root directory}:/data/store:ro
     ports:
-      - "127.0.0.1:30280:8080"
+      - "${MAE_BIND:-127.0.0.1}:${MAE_PORT:-30280}:8080"
     depends_on:
       migrate:
         condition: service_completed_successfully

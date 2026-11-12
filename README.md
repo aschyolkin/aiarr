@@ -19,9 +19,8 @@ Seerr request ─► search in sources ─► pick a release ─► qBittorrent
 Jellyfin ◄─ hardlink import ◄─ ffprobe verification ◄────────┘
 ```
 
-It runs in production on a TrueNAS SCALE home server and replaced Radarr and Sonarr there
-on 2026-09-23. See the [operations log](docs/OPERATIONS.ru.md) (in Russian) for the
-current deployment state.
+It runs in Docker on any Linux machine and has replaced Radarr and Sonarr in production
+on a home server.
 
 ## Features
 
@@ -99,32 +98,70 @@ Design notes: [ADR-001](docs/ADR-001-core.md), [Seerr contract](docs/SEERR_CONTR
 ## Requirements
 
 - Seerr, qBittorrent (Web UI enabled), Jellyfin and at least one search source.
-- One dataset mounted at `/data/store` that contains the download directory and the
-  library, because import is a hardlink:
+- One filesystem holding the download directory and the library, because import is a
+  hardlink. Its path is `MAE_STORE_HOST` on the host and `/data/store` in the containers:
   ```
   /data/store/downloads/{films,serials}   qBittorrent saves here
   /data/store/films                       movie library
   /data/store/serials                     series library
   ```
-- Docker (the provided image contains ffmpeg), or Python 3.12 with `uv` and `ffprobe`.
+- A Linux host with Docker and the Compose plugin (the image contains ffmpeg), or Python
+  3.12 with `uv` and `ffprobe` to run it without Docker.
 
-## Quick start
+## Installation
+
+### Install script
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/aschyolkin/aiarr/main/install.sh | bash
+```
+
+or, from a checkout, `./install.sh`. The script:
+
+1. checks that Docker, the Compose plugin and the daemon are available;
+2. downloads aiarr (when not run from a checkout) and asks for the media root, the
+   qBittorrent, Jellyfin and Seerr addresses and keys, and an optional DeepSeek key;
+3. writes `.env` (permissions 600) with a generated API key, quoting values safely;
+4. creates the missing media directories and the state directory with the right owner
+   (existing directories and files are never touched);
+5. builds the image, checks from inside a container that the directories are writable and
+   that qBittorrent, Jellyfin and Seerr are reachable, and starts everything;
+6. waits for the API to become healthy and prints the next steps.
+
+It is safe to run again: an existing `.env` is kept (`AIARR_RECONFIGURE=1` asks again and
+keeps a backup), and a repeat run rebuilds and restarts, so it also updates aiarr
+(`git pull && ./install.sh`). For unattended use preset the `MAE_*` variables from
+`.env.example` and set `AIARR_YES=1`. Real downloads stay off (`MAE_DRY_RUN=true`) unless
+you say yes when asked.
+
+Services on the same machine are reached from the container as
+`http://host.docker.internal:<port>`; `127.0.0.1` would be the container itself.
+
+### Manual installation
 
 ```sh
 cp .env.example .env && chmod 600 .env
-# set MAE_API_KEY (24+ random characters), the qBittorrent, Jellyfin and Seerr URLs and keys,
-# and MAE_STATE_HOST (a persistent directory writable by uid 3000)
-docker compose up -d --build        # runs migrations, then api and worker
+# set MAE_API_KEY (24+ random characters), MAE_STORE_HOST, MAE_STATE_HOST and the
+# qBittorrent, Jellyfin and Seerr URLs and keys
+mkdir -p "$STATE" && sudo chown 3000:3000 "$STATE"   # the state directory ($MAE_STATE_HOST)
+docker compose up -d --build                         # runs migrations, then api and worker
 ```
 
-The API listens on `127.0.0.1:30280` (put it behind your reverse proxy). Open
-`http://<host>:30280/admin`, sign in as a Seerr administrator in the same browser and
-add sources under *Sources*. `MAE_DRY_RUN=true` is the default: check that the right
-releases are selected, then set it to `false`.
+### After installing
 
-Finally, in Seerr add a Radarr and a Sonarr server that point to
-`http://<host>:30280/radarr` and `http://<host>:30280/sonarr` with the API key and
-quality profile `1`. Details and rollback: [Deployment](docs/DEPLOYMENT.md).
+The API listens on `MAE_BIND:MAE_PORT` (default `127.0.0.1:30280`; the install script
+suggests `0.0.0.0` so that Seerr in another container can reach it, so put a firewall or
+a reverse proxy in front if the network is not trusted). Everything requires
+authentication.
+
+1. Open `http://<host>:30280/admin`, sign in to Seerr as an administrator in the same
+   browser and add sources under *Sources*.
+2. In Seerr add a Radarr and a Sonarr server pointing to `http://<host>:30280/radarr` and
+   `http://<host>:30280/sonarr`, with the `MAE_API_KEY` and quality profile `1`.
+3. `MAE_DRY_RUN=true` is the default: request something, check that the right release is
+   selected, then set `MAE_DRY_RUN=false` in `.env` and run `docker compose up -d`.
+
+Upgrade and rollback notes: [Deployment](docs/DEPLOYMENT.md).
 
 ## Configuration
 
@@ -176,7 +213,7 @@ same license, keep the copyright notices and offer its source code to its users.
 
 ## Documentation
 
-[Operations log](docs/OPERATIONS.ru.md) (RU) · [Deployment and rollback](docs/DEPLOYMENT.md) ·
+[Deployment and rollback](docs/DEPLOYMENT.md) ·
 [Acceptance record](docs/ACCEPTANCE.md) · [Seerr contract](docs/SEERR_CONTRACT.md) ·
 [Source matrix](docs/SOURCE_SUPPORT_MATRIX.md) · [Adapter SDK](docs/ADAPTER_SDK.md) ·
 [Architecture decision](docs/ADR-001-core.md) · [Reuse audit](docs/REUSE_PLAN.md) ·
