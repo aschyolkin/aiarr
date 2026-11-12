@@ -5,6 +5,7 @@ import re
 import secrets
 import shutil
 import time
+from urllib.parse import quote
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request
@@ -611,7 +612,8 @@ def create_app(settings=None, db=None, seerr=None):
         The tvdbId handed out is the TMDB id plus an offset; Seerr stores it and aiarr reads it back.
         """
         try:
-            found = seerr.get("/search", query=name[:200], page=1).get("results", [])
+            # Seerr rejects "+" for spaces in the query string, so it is percent-encoded by hand.
+            found = seerr.get("/search?query=" + quote(name[:200], safe="") + "&page=1").get("results", [])
         except Exception:
             raise HTTPException(502, "Seerr search failed") from None
         series = []
