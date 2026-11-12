@@ -5,9 +5,8 @@ from mae.verification import check_path
 
 def destination_for(work, source, store, episode=None, series_folder=None):
     title = re.sub(r"[^\w .-]", "_", work.title)[:100].strip(" .") or "Untitled"
-    namespace = "tmdbid" if work.kind == "movie" else "tvdbid"
     year = f" ({work.year})" if work.year else ""
-    folder_name = f"{title}{year} [{namespace}-{work.external_id}]"
+    folder_name = f"{title}{year} [{work.library_namespace}-{work.library_id}]"
     folder = store / ("films" if work.kind == "movie" else "serials") / folder_name
     if work.kind == "series":
         if series_folder is not None:

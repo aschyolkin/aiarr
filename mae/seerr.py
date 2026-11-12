@@ -3,7 +3,7 @@ import time
 
 import httpx
 
-from mae.domain import Work
+from mae.domain import TMDB_SERIES_OFFSET, Work
 
 
 def poster(detail):
@@ -17,6 +17,11 @@ _METADATA_CACHE = {}
 METADATA_TTL = 3600
 # Trackers name foreign films by their English title, not e.g. Korean script.
 ENGLISH_TITLE_LANGUAGES = {"en", "ru"}
+
+
+def series_id(media):
+    """The TVDB id Seerr holds for a series, or the TMDB-based stand-in when there is none."""
+    return media.get("tvdbId") or TMDB_SERIES_OFFSET + media["tmdbId"]
 
 
 class Seerr:
@@ -100,7 +105,7 @@ class Seerr:
                 pass  # An extra search name only; never blocks the request.
         return Work(
             kind=kind,
-            external_id=tmdb if kind == "movie" else media["tvdbId"],
+            external_id=tmdb if kind == "movie" else series_id(media),
             title=title,
             aliases=aliases,
             year=int(date[:4]) if date else None,

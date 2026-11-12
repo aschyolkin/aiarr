@@ -76,7 +76,8 @@ on a home server.
   Sign in through an open Seerr administrator session, or with the API key. The language
   (English/Russian) is switched with the EN/RU button in the menu.
 - Seerr-compatible facade (`/radarr/api/v3`, `/sonarr/api/v3`): Seerr talks to aiarr as
-  if it were Radarr and Sonarr.
+  if it were Radarr and Sonarr. A series that TMDB has no TVDB id for appears in Seerr's
+  "match this series" dialog (searched by name) and is then tracked by its TMDB id.
 - Deleting a request in Seerr removes the files and torrent aiarr owns, after checking
   category, tag, path, inode and device. Nothing else is ever deleted.
 - Dry-run is the default: nothing is downloaded or written to the library.

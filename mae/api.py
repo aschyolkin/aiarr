@@ -14,9 +14,9 @@ from pydantic import BaseModel, Field
 from mae.admin import ADMIN_HTML
 from mae.config import Settings
 from mae.db import Database
-from mae.domain import Work
+from mae.domain import TMDB_SERIES_OFFSET, Work
 from mae.runtime_config import RuntimeConfig, plain
-from mae.seerr import Seerr
+from mae.seerr import Seerr, series_id
 from mae.seerr_session import same_origin_write, seerr_admin_session
 
 
@@ -156,7 +156,9 @@ def create_app(settings=None, db=None, seerr=None):
             "json_extract(j.candidate,'$.image_url') image_url,j.replacing,"
             "json_extract(j.upgrade_candidate,'$.to.resolution') upgrade_resolution,"
             "json_extract(j.upgrade_candidate,'$.from.resolution') current_resolution,"
-            "json_extract(j.work,'$.air_dates') air_dates "
+            "json_extract(j.work,'$.air_dates') air_dates,"
+            "(json_extract(j.decision,'$.verdict.download')=1 AND json_extract(j.decision,'$.verdict.reviewed') IS NULL "
+            "AND j.candidate IS NOT NULL AND json_extract(j.candidate,'$.parsed.manual') IS NULL) ai_pending "
             "FROM jobs j WHERE j.state!='CANCELLED' ORDER BY j.id DESC"
         )
         transfer = None
@@ -497,6 +499,16 @@ def create_app(settings=None, db=None, seerr=None):
                 })
         return {"today": today, "episodes": sorted(rows, key=lambda r: (r["date"], r["title"] or "", r["episode"]))}
 
+    @app.post("/admin/jobs/{job_id}/ack-ai")
+    def acknowledge_ai(job_id: int):
+        """The administrator has looked at the release the AI chose; the review mark goes away."""
+        db.job(job_id)
+        db.execute(
+            "UPDATE jobs SET decision=json_set(decision,'$.verdict.reviewed',json('true')) "
+            "WHERE id=:id AND json_valid(decision) AND json_extract(decision,'$.verdict') IS NOT NULL", id=job_id,
+        )
+        return db.job(job_id)
+
     @app.post("/admin/jobs/{job_id}/abort-upgrade")
     def abort_upgrade(job_id: int):
         try:
@@ -580,7 +592,7 @@ def create_app(settings=None, db=None, seerr=None):
             req_kind = "movie" if req["type"] == "movie" else "series"
             if (
                 req_kind == kind
-                and req["media"].get("tmdbId" if kind == "movie" else "tvdbId") == external_id
+                and (req["media"].get("tmdbId") if kind == "movie" else series_id(req["media"])) == external_id
             ):
                 approved.append(seerr.work(req))
                 source_requests.append(req)
@@ -592,6 +604,29 @@ def create_app(settings=None, db=None, seerr=None):
                 "episodes": sorted({ep for work in approved for ep in work.episodes}),
             }
         ), source_requests
+
+    def find_series(name):
+        """Name search for Seerr's "match this series" dialog (a show TMDB has no TVDB id for).
+
+        The tvdbId handed out is the TMDB id plus an offset; Seerr stores it and aiarr reads it back.
+        """
+        try:
+            found = seerr.get("/search", query=name[:200], page=1).get("results", [])
+        except Exception:
+            raise HTTPException(502, "Seerr search failed") from None
+        series = []
+        for item in found:
+            if item.get("mediaType") != "tv" or type(item.get("id")) is not int or not item.get("name"):
+                continue
+            date = item.get("firstAirDate") or ""
+            poster = item.get("posterPath") or ""
+            series.append({
+                "title": item["name"], "year": int(date[:4]) if date[:4].isdigit() else 0,
+                "overview": item.get("overview") or "", "tvdbId": TMDB_SERIES_OFFSET + item["id"],
+                "tmdbId": item["id"], "seasons": [], "monitored": False,
+                "remotePoster": "https://image.tmdb.org/t/p/w185" + poster if re.fullmatch(r"/[A-Za-z0-9_.-]+", poster) else None,
+            })
+        return series[:6]
 
     def render(work, job=None):
         imports = (
@@ -737,6 +772,8 @@ def create_app(settings=None, db=None, seerr=None):
         @app.get(prefix + "/" + endpoint + "/lookup")
         def lookup(term: str):
             namespace = "tmdb:" if kind == "movie" else "tvdb:"
+            if kind == "series" and not term.startswith(namespace):
+                return find_series(term)
             if not term.startswith(namespace) or not term[len(namespace) :].isdigit():
                 raise HTTPException(422, "External ID lookup required")
             work, _ = approved_work(kind, int(term[len(namespace) :]))

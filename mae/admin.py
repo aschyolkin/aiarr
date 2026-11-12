@@ -57,6 +57,8 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <progress id="download-progress" class="progress" max="100" value="0"></progress></div>
 <div id="upgrade-panel" class="notice" hidden><span id="upgrade-text"></span>
 <div><button id="upgrade-apply" type="button">Заменить на этот релиз</button><button id="upgrade-abort" type="button">Отменить замену</button></div></div>
+<div id="ai-panel" class="notice warn" hidden><b>🤖 Кандидат выбран ИИ, требуется проверка.</b> <span id="ai-text"></span>
+<div><button id="ai-ack" type="button">Проверил, всё верно</button></div></div>
 <h3>Ход заказа</h3><ol id="timeline" class="timeline"></ol>
 <div id="episodes-panel" hidden><h3>Эпизоды</h3><p id="episode-summary"></p><ul id="episode-list"></ul></div>
 <button id="retry">Повторить попытку</button><button id="cancel">Отменить запрос</button>
@@ -450,7 +452,8 @@ function renderCandidates(decision,chosen){
   const codec=p.video_codec||claims.find(x=>x.field==='video_codec')?.value;
   const problems=[...(c.reasons||[]),...(c.unknown||[])].map(x=>candidateReasons[x]||x);
   const why=scoreText(c);
-  const verdict=isChosen?'✅ Выбран · '+scoreOf(c)+' баллов'+(why?' ('+why+')':''):fit?'✔ Подходит · '+scoreOf(c)+' баллов'+(why?' ('+why+')':''):'✖ '+problems.join('; ');
+  const byAi=isChosen&&decision?.verdict?.download&&!chosen?.parsed?.manual;
+  const verdict=isChosen?(byAi?'✅ Выбран ИИ, требуется проверка · ':'✅ Выбран · ')+scoreOf(c)+' баллов'+(why?' ('+why+')':''):fit?'✔ Подходит · '+scoreOf(c)+' баллов'+(why?' ('+why+')':''):'✖ '+problems.join('; ');
   const cells=[r.title||'',r.provider||'',[p.screen_size,p.source].filter(Boolean).join(' · ')||'—',codec||'—',
    sizeText(r.size),r.seeders??'—',[...audio,...voices,...studios].join(', ')||'—'];
   const pic=document.createElement('td');
@@ -515,6 +518,9 @@ function renderProgress(data){
  else if(upgrade?.candidate)byId('upgrade-text').textContent='Найден релиз лучше: «'+upgrade.candidate.release.title+'» ('+
   upgrade.candidate.release.provider+'). Сейчас '+(upgrade.from.resolution||'?')+'p · '+upgrade.from.score+' баллов → будет '+
   upgrade.to.resolution+'p · '+upgrade.to.score+' баллов ('+scoreText(upgrade.candidate)+').';
+ const ai=decision.verdict,aiPending=Boolean(ai&&ai.download&&!ai.reviewed&&chosen?.release&&!chosen.parsed?.manual);
+ byId('ai-panel').hidden=!aiPending;
+ if(aiPending)byId('ai-text').textContent=(lang==='en'?ai.reason_en:ai.reason_ru)||'';
  byId('timeline').replaceChildren();const seen=new Set();
  for(const event of data.events||[]){
   const key=event.state+':'+(event.reason||'');if(seen.has(key))continue;seen.add(key);
@@ -715,6 +721,7 @@ function renderJobs(overview){
   const air=parse(job.air_dates)||{},today=new Date().toISOString().slice(0,10);
   const next=Object.values(air).filter(d=>d&&d>today).sort()[0];
   if(work.kind==='series'&&next)lines.push('следующая серия '+new Date(next+'T12:00:00').toLocaleDateString(loc(),{day:'numeric',month:'short'}));
+  if(job.ai_pending)lines.unshift('🤖 Выбрано ИИ — требуется проверка');
   if(job.replacing)lines.push('🔄 идёт замена на релиз лучше');
   else if(job.upgrade_resolution)lines.push('⬆ есть релиз лучше'+(job.current_resolution&&job.upgrade_resolution>job.current_resolution?': '+job.upgrade_resolution+'p':''));
   const p=document.createElement('p');p.className='muted';p.textContent=lines.join(' · ');body.append(p);
@@ -764,6 +771,7 @@ setInterval(()=>{
 },3000);
 byId('add-studio').onclick=()=>{const name=byId('new-studio').value.trim();if(!name)return;
  weightRow(byId('studio-weights'),name,name,0);byId('new-studio').value='';};
+byId('ai-ack').onclick=()=>run(async()=>{if(selected===null)return;await api('/admin/jobs/'+selected+'/ack-ai','POST');await refresh();});
 byId('upgrade-apply').onclick=()=>run(async()=>{const u=parse(currentJob?.upgrade_candidate);if(u?.candidate)await chooseRelease(u.candidate);});
 byId('upgrade-abort').onclick=()=>run(async()=>{if(selected===null||!confirm(t('Отменить замену? Файл в библиотеке останется прежним.')))return;
  await api('/admin/jobs/'+selected+'/abort-upgrade','POST');await refresh();});

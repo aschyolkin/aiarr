@@ -42,6 +42,11 @@ class Claim(BaseModel):
     method: str = "rule"
 
 
+# A series that TMDB has no TVDB id for is identified as TMDB id + this offset. The number
+# still fits Seerr's integer tvdbId column and is far above any real TVDB id.
+TMDB_SERIES_OFFSET = 1_000_000_000
+
+
 class Work(BaseModel):
     kind: Literal["movie", "series"]
     external_id: int = Field(gt=0)
@@ -59,6 +64,19 @@ class Work(BaseModel):
     air_dates: dict[str, str] = {}
     # TMDB poster path from Seerr, display only.
     poster_path: str | None = Field(default=None, max_length=200, pattern=r"^/[A-Za-z0-9_.-]+$")
+
+    @property
+    def tmdb_only(self):
+        return self.kind == "series" and self.external_id >= TMDB_SERIES_OFFSET
+
+    @property
+    def library_namespace(self):
+        """The provider id Jellyfin and the library folder name use for this work."""
+        return "tvdbid" if self.kind == "series" and not self.tmdb_only else "tmdbid"
+
+    @property
+    def library_id(self):
+        return self.external_id - TMDB_SERIES_OFFSET if self.tmdb_only else self.external_id
 
 
 class SearchResult(BaseModel):

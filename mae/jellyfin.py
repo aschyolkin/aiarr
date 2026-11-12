@@ -33,7 +33,7 @@ class Jellyfin:
         )
 
     def coverage(self, work):
-        namespace = "Tmdb" if work.kind == "movie" else "Tvdb"
+        namespace = work.library_namespace[:-2].capitalize()
         kind = "Movie" if work.kind == "movie" else "Series"
         with self.client() as client:
             if self.items is not None:
@@ -44,7 +44,7 @@ class Jellyfin:
                     params={
                         "Recursive": "true",
                         "Fields": "ProviderIds,Path",
-                        "AnyProviderIdEquals": f"{namespace}.{work.external_id}",
+                        "AnyProviderIdEquals": f"{namespace}.{work.library_id}",
                         "IncludeItemTypes": kind,
                     },
                 )
@@ -54,7 +54,7 @@ class Jellyfin:
             items = [
                 item
                 for item in listed
-                if str(item.get("ProviderIds", {}).get(namespace)) == str(work.external_id)
+                if str(item.get("ProviderIds", {}).get(namespace)) == str(work.library_id)
             ]
             if work.kind == "movie":
                 return (
@@ -89,7 +89,7 @@ class Jellyfin:
                 "/Items",
                 params={
                     "Recursive": "true", "Fields": "ProviderIds,Path",
-                    "AnyProviderIdEquals": f"Tvdb.{work.external_id}",
+                    "AnyProviderIdEquals": f"{work.library_namespace[:-2].capitalize()}.{work.library_id}",
                     "IncludeItemTypes": "Series",
                 },
             )
@@ -97,7 +97,7 @@ class Jellyfin:
         paths = {
             item.get("Path")
             for item in response.json().get("Items", [])
-            if str(item.get("ProviderIds", {}).get("Tvdb")) == str(work.external_id)
+            if str(item.get("ProviderIds", {}).get(work.library_namespace[:-2].capitalize())) == str(work.library_id)
             and isinstance(item.get("Path"), str) and item.get("Path")
         }
         if len(paths) > 1:

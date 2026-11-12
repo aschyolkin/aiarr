@@ -145,6 +145,10 @@ LITERALS = {
     "Студия распознаётся в названии раздачи и в строках «Аудио»/«Перевод» описания.":
         "The studio is recognised in the release name and in the “Audio”/“Translation” lines of the description.",
     "Выбор релиза": "Release choice",
+    "🤖 Кандидат выбран ИИ, требуется проверка.": "🤖 Candidate chosen by the AI, review needed.",
+    "Проверил, всё верно": "Reviewed, looks right",
+    "🤖 Выбрано ИИ — требуется проверка": "🤖 Chosen by the AI — review needed",
+    "✅ Выбран ИИ, требуется проверка · ": "✅ Chosen by the AI, review needed · ",
     "ИИ решил не скачивать — причина в ходе заказа": "The AI decided not to download — see the reason in the order progress",
     "Решение ИИ: ": "AI decision: ",
     "Решение: ": "Decision: ",

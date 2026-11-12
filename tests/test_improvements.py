@@ -16,6 +16,7 @@ from mae.domain import DownloadHandle, Evidence, ReleaseDetails, SearchResult, W
 from mae.parsing import parse_candidate
 from mae.policies import evaluate, score_of
 from mae.providers import TorznabProvider
+from mae.seerr import series_id
 from mae.worker import Worker
 
 
@@ -418,3 +419,38 @@ def test_unusable_torrent_is_skipped_not_sent_to_review(settings, db, movie, mon
     job = db.job(job_id)
     assert (job["state"], job["reason"], job["candidate"]) == ("RETRY_SCHEDULED", "TORRENT_EPISODE_MAPPING_UNVERIFIED", None)
     assert db.execute("SELECT release_id FROM rejected_releases")[0]["release_id"] == "pack"
+
+
+def test_ai_choice_is_marked_until_the_administrator_acknowledges(settings, db, movie, monkeypatch):
+    job_id = db.submit(movie, False)
+    verdict = {"download": True, "by": "deepseek", "release": "X", "reason_ru": "да", "reason_en": "yes"}
+    db.transition(job_id, "DOWNLOADING", decision=json.dumps({"candidates": [], "verdict": verdict}),
+                  candidate=candidate_json("Example.2024.1080p.WEB-DL.H.264", "ai", movie))
+    client = client_for(settings, db)
+
+    def pending():
+        return [j["ai_pending"] for j in client.get("/admin/overview").json()["jobs"] if j["id"] == job_id]
+
+    assert pending() == [1]
+    assert client.post(f"/admin/jobs/{job_id}/ack-ai", headers={"X-Aiarr-UI": "1"}).status_code == 200
+    assert pending() == [None] or pending() == [0]
+    assert json.loads(db.job(job_id)["decision"])["verdict"]["reviewed"] is True
+
+
+def test_series_without_tvdb_id_is_matched_by_name_and_kept_by_tmdb_id(settings, db):
+    seerr = Mock()
+    seerr.get.return_value = {"results": [
+        {"mediaType": "tv", "id": 477295, "name": "Где лифт?", "firstAirDate": "2024-05-01", "posterPath": "/p.jpg"},
+        {"mediaType": "movie", "id": 5, "title": "Film"},
+    ]}
+    client = TestClient(create_app(settings, db, seerr=seerr),
+                        headers={"X-Api-Key": settings.api_key.get_secret_value()})
+    found = client.get("/sonarr/api/v3/series/lookup", params={"term": "Where is the elevator"}).json()
+    assert [(i["title"], i["tvdbId"], i["year"]) for i in found] == [("Где лифт?", 1_000_477_295, 2024)]
+    assert found[0]["remotePoster"].endswith("/p.jpg")
+    assert series_id({"tmdbId": 477295, "tvdbId": None}) == 1_000_477_295
+    assert series_id({"tmdbId": 477295, "tvdbId": 99}) == 99
+    work = Work(kind="series", external_id=1_000_477_295, title="Где лифт?", year=2024)
+    assert (work.library_namespace, work.library_id) == ("tmdbid", 477295)
+    assert Work(kind="series", external_id=99, title="x").library_namespace == "tvdbid"
+    assert Work(kind="movie", external_id=5, title="x").library_namespace == "tmdbid"
