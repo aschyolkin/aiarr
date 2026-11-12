@@ -728,3 +728,10 @@ TMDB-based ids (offset 1e9). Checked live: `GET /sonarr/api/v3/series/lookup?ter
 show with id 1000251588; overview carries `ai_pending`. Not yet observed: the Seerr "match this series"
 dialog in a browser, and a full request of such a series.
 Rollback: set the three images back to `fdc8798` (no schema change).
+
+## Production deployment of bf66749 — 2026-11-12
+
+Seerr sends the English title to the facade's name lookup ("Beauty" for TMDB 318158 «Красота»,
+which has no TVDB id); the plain search did not contain the show. The lookup now searches in English,
+two pages, and puts the exact-name show without a TVDB id first. Checked live:
+`series/lookup?term=Beauty` returns 318158 first. Rollback: images back to `d2eead6`.
