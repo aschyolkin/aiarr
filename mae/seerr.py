@@ -39,7 +39,7 @@ class Seerr:
             follow_redirects=False,
             headers={"X-Api-Key": key},
         ) as client:
-            response = client.get("/api/v1" + path, params=params)
+            response = client.get("/api/v1" + path, params=params or None)  # keeps a hand-encoded query
             response.raise_for_status()
             return response.json()
 
