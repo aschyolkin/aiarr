@@ -706,3 +706,14 @@ verification fallback to the next release, series upgrades, text search, the
 calendar page in a browser, parallel source search under a real request.
 Rollback: set the three images back to `ea44642` and restore the snapshot
 (migration 0012 has no downgrade).
+
+## Production deployment of fdc8798 — 2026-11-12
+
+App `aiarr` moved from `:96f6fd8` to `:fdc8798` (no migration). ZFS snapshot
+`data/apps/aiarr-state@pre-fdc8798-20261112`. Contents: EN/RU admin UI, AI verdict for
+releases with unconfirmed facts (`trust_unproven`, default on), review-free fallback after
+failed verification. After: both containers up, api healthy, `/admin` 200. Jobs 23, 26 and
+28 (NEEDS_REVIEW) were retried through the API: 26 started downloading, 23 and 28 wait for
+a free download slot. Not yet observed live: a DeepSeek verdict text and the language switch
+in a real browser (both covered by tests and a jsdom run).
+Rollback: set the three images back to `96f6fd8` (no schema change).
