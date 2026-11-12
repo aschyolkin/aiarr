@@ -689,3 +689,20 @@ license-text bundling also remain production release work.
 Default dry-run retained. Production Seerr/Radarr/Sonarr/Jellyfin settings have
 not been switched. Test-generated media is confined to the staging test directory.
 The isolated service stack was shut down after testing; fixture media is retained.
+
+## Production deployment of 96f6fd8 — 2026-11-12
+
+TrueNAS app `aiarr` moved from `media-acquisition-engine:ea44642` to `:96f6fd8`
+(`app.update`, all three services). Before: ZFS snapshot
+`data/apps/aiarr-state@pre-96f6fd8-20261112` and a verified SQLite backup
+(`/mnt/data/apps/aiarr-pre-96f6fd8-20261112/snap`, schema 0011, sha256 `bfe27304…`).
+All 13 qBittorrent torrents were complete, none downloading, at update time.
+Migration 0012 ran (`migrate` exited 0): `card_cache`, `rejected_releases`, indexes,
+and removal of repeated identical journal rows. After: api healthy, `/health`,
+`/admin/calendar` and `/admin/overview` return 200, the Web UI answers on :30280,
+the worker reconciles Seerr every minute, job counts unchanged (8 AVAILABLE,
+3 NEEDS_REVIEW, 5 WAITING_FOR_RELEASE, 15 CANCELLED). Not yet observed live:
+verification fallback to the next release, series upgrades, text search, the
+calendar page in a browser, parallel source search under a real request.
+Rollback: set the three images back to `ea44642` and restore the snapshot
+(migration 0012 has no downgrade).
