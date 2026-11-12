@@ -162,6 +162,12 @@ uv run ruff check mae migrations tests
 instances and are not collected by `pytest`. Never commit `.env`, cookies, passkeys or
 account data.
 
+## License
+
+AGPL-3.0-only, see [LICENSE](LICENSE). You may use, change and share aiarr freely, but a
+modified version that you distribute or run as a network service must stay open under the
+same license, keep the copyright notices and offer its source code to its users.
+
 ## Documentation
 
 [Operations log](docs/OPERATIONS.ru.md) (RU) · [Deployment and rollback](docs/DEPLOYMENT.md) ·

@@ -37,4 +37,5 @@ Seerr MIT; qBittorrent GPL; Jellyfin GPL. No indexer definitions are redistribut
 here. Container images include additional OS/FFmpeg dependencies and notices;
 an image-level SBOM must accompany a released production build.
 
-No license is asserted for the user's new engine code without their choice.
+The engine itself is licensed under AGPL-3.0-only (see LICENSE). All dependencies
+above are compatible with it; GuessIt (LGPL-3.0-or-later) is used as a separate library.
