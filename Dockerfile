@@ -5,6 +5,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certi
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY pyproject.toml uv.lock ./
+# Dependencies first: this layer is rebuilt only when the lock file changes.
+RUN uv sync --frozen --no-dev --no-install-project
 COPY mae ./mae
 RUN uv sync --frozen --no-dev
 COPY alembic.ini ./

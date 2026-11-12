@@ -279,13 +279,14 @@ def test_failed_replacement_keeps_old_file(db, library_movie, monkeypatch):
     downloader.info.return_value = {"progress": 1, "state": "uploading", "save_path": str(downloads)}
     downloader.files.return_value = [{"name": bad.name}]
     Worker(settings, db, [], downloader).tick()
-    assert db.job(job_id)["state"] == "NEEDS_REVIEW"
+    # A release whose file fails verification gives the upgrade up by itself.
     assert destination.read_bytes() == b"old"
-    assert db.abort_replacement(job_id)
     job = db.job(job_id)
     assert (job["state"], job["replacing"], job["reason"]) == ("AVAILABLE", 0, "UPGRADE_CANCELLED")
     assert json.loads(job["candidate"])["release"]["release_id"] == "old"
-    assert "b" * 40 in {r["torrent_hash"] for r in db.execute("SELECT torrent_hash FROM discard_downloads")}
+    assert job["torrent_hash"] is None and job["upgrade_candidate"] is None
+    downloader.delete_owned.assert_called_once_with("b" * 40, settings.store / "downloads")
+    assert db.execute("SELECT reason FROM rejected_releases")[0]["reason"] == "VIDEO_CODEC_MISMATCH"
 
 
 # ---------- source health

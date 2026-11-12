@@ -23,6 +23,18 @@ class Database:
     def jobs(self):
         return self.execute("SELECT * FROM jobs ORDER BY id")
 
+    def reject_release(self, job_id, candidate, torrent_hash, reason):
+        """Remember a release whose downloaded file failed verification."""
+        release = json.loads(candidate or "{}").get("release") or {}
+        if not release.get("provider") or not release.get("release_id"):
+            return
+        self.execute(
+            "INSERT OR REPLACE INTO rejected_releases(job_id,provider,release_id,torrent_hash,reason,created) "
+            "VALUES(:id,:provider,:release,:hash,:reason,:now)",
+            id=job_id, provider=release["provider"], release=release["release_id"], hash=torrent_hash,
+            reason=reason, now=time.time(),
+        )
+
     def job(self, job_id):
         rows = self.execute("SELECT * FROM jobs WHERE id=:id", id=job_id)
         if not rows:
@@ -56,15 +68,21 @@ class Database:
                         "air_dates": {**previous.get("air_dates", {}), **work.air_dates},
                     }
                 )
-                conn.execute(
-                    text("UPDATE jobs SET work=:work WHERE id=:id"),
-                    {"work": merged.model_dump_json(), "id": row["id"]},
-                )
-                for episode in merged.episodes:
+                # Reconciliation repeats every minute; only a real change is written.
+                if merged.model_dump() != type(work).model_validate(previous).model_dump():
                     conn.execute(
-                        text("INSERT OR IGNORE INTO episodes(job_id,episode) VALUES(:job,:episode)"),
-                        {"job": row["id"], "episode": episode},
+                        text("UPDATE jobs SET work=:work WHERE id=:id"),
+                        {"work": merged.model_dump_json(), "id": row["id"]},
                     )
+                known = {r[0] for r in conn.execute(
+                    text("SELECT episode FROM episodes WHERE job_id=:job"), {"job": row["id"]}
+                )}
+                for episode in merged.episodes:
+                    if episode not in known:
+                        conn.execute(
+                            text("INSERT OR IGNORE INTO episodes(job_id,episode) VALUES(:job,:episode)"),
+                            {"job": row["id"], "episode": episode},
+                        )
                 if set(merged.episodes) - set(previous["episodes"]) and row["state"] == "AVAILABLE":
                     conn.execute(
                         text(
@@ -455,7 +473,7 @@ class Database:
 
     BUSY_IMPORTING = ("VERIFYING", "IMPORTING")
 
-    def choose_release(self, job_id, provider, release_id, replacing=False):
+    def choose_release(self, job_id, provider, release_id, replacing=False, query=None):
         """Download one release picked by an administrator (or an upgrade).
 
         A running download of this job is discarded. When replacing a library
@@ -480,6 +498,9 @@ class Database:
                 conn.execute(text("INSERT OR IGNORE INTO discard_downloads(job_id,torrent_hash) VALUES(:id,:hash)"),
                              {"id": job_id, "hash": torrent_hash})
             choice = {"provider": provider, "release_id": release_id}
+            if query:
+                # Found by an administrator's own search text, not the work title.
+                choice["query"] = query
             if replacing:
                 choice["previous_candidate"] = previous
             reason = "UPGRADE_STARTED" if replacing else "MANUAL_RELEASE_CHOSEN"
@@ -545,7 +566,13 @@ class Database:
                         text("INSERT OR IGNORE INTO job_downloads(job_id,torrent_hash) VALUES(:id,:hash)"),
                         {"id": job_id, "hash": updates[key]},
                     )
-            conn.execute(
-                text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,:state,:reason,:created)"),
-                dict(id=job_id, state=state, reason=reason, created=time.time()),
-            )
+            # A repeated check of an unchanged job (a download polled every
+            # 30 seconds) is not a new step in its history.
+            last = conn.execute(
+                text("SELECT state,reason FROM events WHERE job_id=:id ORDER BY id DESC LIMIT 1"), {"id": job_id}
+            ).first()
+            if last is None or (last[0], last[1]) != (state, reason):
+                conn.execute(
+                    text("INSERT INTO events(job_id,state,reason,created) VALUES(:id,:state,:reason,:created)"),
+                    dict(id=job_id, state=state, reason=reason, created=time.time()),
+                )

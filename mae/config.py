@@ -37,6 +37,9 @@ class ProviderConfig(BaseModel):
     cookie: SecretStr = SecretStr("")
     encoding: str = "utf-8"
     interval: float = Field(default=2, ge=0, le=300)
+    # Torznab categories to restrict every search to (e.g. 2000 movies, 5000 TV);
+    # empty searches all. Trackers misfile releases, so this is opt-in per source.
+    categories: list[int] = Field(default=[], max_length=20)
 
     @model_validator(mode="after")
     def validate_enrichment(self):
@@ -98,7 +101,6 @@ class Policy(BaseModel):
     }
     # Kind of Russian voice-over; the best one present in a release scores.
     voice_weights: dict[str, int] = {"Dub": 15, "MVO": 10, "DVO": 5, "AVO": 5, "VO": 0}
-    upgrades: Literal[False] = False
 
 
 class Settings(BaseSettings):
@@ -132,7 +134,7 @@ class Settings(BaseSettings):
     min_seeders: int = Field(default=2, ge=0, le=1000)
     min_download_speed: int = Field(default=125_000, ge=0)  # bytes/s, 1 Mbit/s
     max_eta_seconds: int = Field(default=3 * 3600, ge=600)
-    # Re-search available movies for a better release every N hours; 0 = never.
+    # Re-search available movies and series for a better release every N hours; 0 = never.
     upgrade_check_hours: int = Field(default=24, ge=0, le=24 * 90)
     # Replace without asking once a clearly better release is found.
     auto_upgrade: bool = False
@@ -145,6 +147,11 @@ class Settings(BaseSettings):
     utc_offset_hours: int = Field(default=3, ge=-12, le=14)
     # Remove a stopped, fully imported torrent from qBittorrent after N days; 0 = keep.
     cleanup_after_days: int = Field(default=0, ge=0, le=3650)
+    # ... or once its share ratio reaches this value; 0 = ignore the ratio.
+    cleanup_ratio: float = Field(default=0, ge=0, le=100)
+    # Keep fetched release cards this long; hourly retries and upgrade checks
+    # re-read the same cards. 0 = always fetch.
+    card_cache_hours: int = Field(default=168, ge=0, le=24 * 90)
 
     @model_validator(mode="after")
     def validate_names(self):

@@ -32,6 +32,12 @@ class Mirror(BaseModel):
 class Choice(BaseModel):
     provider: str = Field(pattern=r"^[a-z][a-z0-9_-]{0,39}$")
     release_id: str = Field(min_length=1, max_length=200)
+    # Set when the release came from the administrator's own search text.
+    query: str | None = Field(default=None, min_length=2, max_length=200)
+
+
+class SearchText(BaseModel):
+    query: str = Field(min_length=2, max_length=200)
 
 
 class Credentials(BaseModel):
@@ -61,6 +67,16 @@ def create_app(settings=None, db=None, seerr=None):
     db = db or Database(settings.state_dir)
     injected_seerr = seerr is not None
     seerr = seerr or Seerr(settings)
+
+    qbit = {}
+
+    def downloader():
+        """One qBittorrent session for the admin pages, renewed when settings change."""
+        if qbit.get("settings") is not settings:
+            from mae.downloads import Downloader
+
+            qbit.update(settings=settings, client=Downloader(settings))
+        return qbit["client"]
 
     def authenticate(request: Request):
         if request.method == "GET" and request.url.path == "/admin":
@@ -145,19 +161,20 @@ def create_app(settings=None, db=None, seerr=None):
         )
         transfer = None
         try:
-            from mae.downloads import Downloader
-
-            downloader = Downloader(settings)
+            client = downloader()
+            torrents = client.all() if any(
+                row["torrent_hash"] and row["state"] != "AVAILABLE" for row in rows
+            ) else {}
             for row in rows:
                 if row["torrent_hash"] and row["state"] != "AVAILABLE":
-                    torrent = downloader.info(row["torrent_hash"])
+                    torrent = torrents.get(row["torrent_hash"])
                     row["progress"] = float(torrent["progress"]) if torrent else None
                     if torrent:
                         row["download_speed"] = int(torrent.get("dlspeed") or 0)
                         row["eta"] = int(torrent.get("eta") or 0)
-            transfer = downloader.transfer()
+            transfer = client.transfer()
         except Exception:
-            pass
+            qbit.clear()  # A broken session is rebuilt on the next request.
         try:
             usage = shutil.disk_usage(settings.store)
         except OSError:
@@ -182,9 +199,7 @@ def create_app(settings=None, db=None, seerr=None):
         download = None
         if job["torrent_hash"]:
             try:
-                from mae.downloads import Downloader
-
-                torrent = Downloader(settings).info(job["torrent_hash"])
+                torrent = downloader().info(job["torrent_hash"])
                 if torrent:
                     download = {
                         "progress": float(torrent.get("progress", 0)),
@@ -195,7 +210,7 @@ def create_app(settings=None, db=None, seerr=None):
                     }
             except Exception:
                 # The job journal remains available when qBittorrent is unreachable.
-                pass
+                qbit.clear()
         return {
             "job": job,
             "imports": db.execute("SELECT * FROM imports WHERE job_id=:id", id=job_id),
@@ -411,20 +426,76 @@ def create_app(settings=None, db=None, seerr=None):
             listed.append(upgrade)
         found = next((c for c in listed if (c.get("release") or {}).get("provider") == payload.provider
                       and (c.get("release") or {}).get("release_id") == payload.release_id), None)
-        if found is None:
+        # A release from the administrator's own search is not in the job's
+        # list; the worker finds it again by that text and checks it there.
+        if found is None and not payload.query:
             raise HTTPException(404, "Release is not among this job's candidates")
-        if not Worker.choosable(found):
+        if found is not None and not Worker.choosable(found):
             raise HTTPException(409, "Размер, кодек или разрешение этого релиза не пройдут проверку")
         replacing = job["state"] == "AVAILABLE" or bool(job["replacing"])
-        if replacing and not job["identity"].startswith("movie:"):
-            raise HTTPException(409, "Замена готового сериала не поддерживается")
         if payload.provider not in {p.name for p in settings.providers}:
             raise HTTPException(409, "Этот источник больше не подключён")
         try:
-            db.choose_release(job_id, payload.provider, payload.release_id, replacing=replacing)
+            db.choose_release(job_id, payload.provider, payload.release_id, replacing=replacing,
+                              query=None if found is not None else payload.query)
         except ValueError as exc:
             raise HTTPException(409, str(exc)) from None
         return db.job(job_id)
+
+    @app.post("/admin/jobs/{job_id}/search")
+    def manual_search(job_id: int, payload: SearchText):
+        """Search every source by the administrator's own text, for this job.
+
+        Release cards are not opened: the list shows what the titles alone
+        say. A chosen release still passes the torrent check and ffprobe.
+        """
+        from mae.domain import ProviderError, ReleaseDetails
+        from mae.parsing import parse_candidate
+        from mae.policies import evaluate
+        from mae.providers import make_provider
+
+        work = Work.model_validate_json(db.job(job_id)["work"])
+        text_query = work.model_copy(update={"title": payload.query.strip(), "year": None})
+        studios = list(settings.policy.studio_weights)
+        candidates, errors = [], []
+        for provider_config in settings.providers:
+            try:
+                results = make_provider(provider_config).search(text_query)[:100]
+            except ProviderError as exc:
+                errors.append({"provider": provider_config.name, "outcome": exc.outcome.value})
+                continue
+            for result in results:
+                candidate = evaluate(parse_candidate(result, ReleaseDetails(), studios), work, settings.policy)
+                candidates.append(candidate.model_dump(exclude={"evidence"}))
+        return {"query": payload.query.strip(), "candidates": candidates, "errors": errors}
+
+    @app.get("/admin/calendar")
+    def calendar(days: int = 60):
+        """Episodes of monitored series by air date: the last week and the coming days."""
+        offset = settings.utc_offset_hours * 3600
+        today = time.strftime("%Y-%m-%d", time.gmtime(time.time() + offset))
+        since = time.strftime("%Y-%m-%d", time.gmtime(time.time() + offset - 7 * 86400))
+        until = time.strftime("%Y-%m-%d", time.gmtime(time.time() + offset + max(1, min(days, 365)) * 86400))
+        rows = []
+        for job in db.execute(
+            "SELECT id,work,state FROM jobs WHERE state!='CANCELLED' AND identity LIKE 'series:%'"
+        ):
+            work = json.loads(job["work"])
+            episodes = {
+                row["episode"]: row for row in db.execute(
+                    "SELECT episode,available,monitored FROM episodes WHERE job_id=:id", id=job["id"]
+                )
+            }
+            for key, date in (work.get("air_dates") or {}).items():
+                row = episodes.get(key)
+                if not date or not since <= date <= until or not row or not row["monitored"]:
+                    continue
+                rows.append({
+                    "job_id": job["id"], "title": work.get("title"), "episode": key, "date": date,
+                    "available": bool(row["available"]), "aired": date <= today,
+                    "poster_path": work.get("poster_path"),
+                })
+        return {"today": today, "episodes": sorted(rows, key=lambda r: (r["date"], r["title"] or "", r["episode"]))}
 
     @app.post("/admin/jobs/{job_id}/abort-upgrade")
     def abort_upgrade(job_id: int):

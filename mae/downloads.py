@@ -114,6 +114,10 @@ class Downloader:
             raise ValueError("TORRENT_OWNED_BY_ANOTHER_SERVICE")
         return row
 
+    def all(self):
+        """Every torrent of this engine's category by hash, in one request."""
+        return {row["hash"]: row for row in self.client.torrents_info(category=self.category)}
+
     def add(self, raw, torrent_hash, kind, wanted_episodes=None, download_limit=None):
         if self.info(torrent_hash):
             if download_limit:

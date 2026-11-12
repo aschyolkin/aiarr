@@ -20,7 +20,7 @@ EDITABLE = frozenset({
     "stall_seconds", "backup_download_limit", "min_seeders", "min_download_speed", "max_eta_seconds",
     "upgrade_check_hours", "auto_upgrade", "speed_schedule_enabled", "speed_limited_from_hour",
     "speed_limited_to_hour", "speed_limit_download", "speed_limit_upload", "utc_offset_hours",
-    "cleanup_after_days",
+    "cleanup_after_days", "cleanup_ratio", "card_cache_hours",
 })
 SECRETS = frozenset({"qbit_password", "jellyfin_key", "seerr_key", "tmdb_key", "deepseek_key"})
 PROVIDER_SECRETS = frozenset({"api_key", "cookie"})

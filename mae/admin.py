@@ -45,7 +45,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <p id="status" role="status"></p>
 <main id="dashboard" hidden>
 <nav class="top"><span id="header-info" class="muted"><span id="mode"></span><span id="disk"></span><span id="speed"></span></span><span class="spacer"></span>
-<a href="#jobs" data-page="jobs">Заявки</a><a href="#sources" data-page="sources">Источники</a>
+<a href="#jobs" data-page="jobs">Заявки</a><a href="#calendar" data-page="calendar">Календарь</a><a href="#sources" data-page="sources">Источники</a>
 <a href="#settings" data-page="settings">⚙ Настройки</a>
 <button id="refresh" type="button">Обновить</button><button id="logout" type="button">Выйти</button></nav>
 <section id="page-jobs" class="page">
@@ -64,6 +64,11 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <section><table class="cand"><thead><tr><th></th><th>Релиз</th><th>Источник</th><th>Качество</th><th>Кодек</th><th>Размер</th>
 <th>Сиды</th><th>Озвучка / студия</th><th>Вывод</th></tr></thead><tbody id="candidates"></tbody></table></section>
 <p class="hint">Кнопка «Скачать этот» выбирает релиз вручную, даже если aiarr сомневается в названии, годе или озвучке. Скачанный файл всё равно проверяется ffprobe по профилю качества (кодек, разрешение, русская дорожка). Для готового фильма выбранный релиз заменит файл в библиотеке только после проверки.</p></details>
+<details><summary>Свой поиск по источникам</summary>
+<p class="hint">Если aiarr не находит релиз по названию из Seerr, найдите его своими словами (другое название, год, студия). Карточки при этом не открываются: в списке видно только то, что следует из названия раздачи. Выбранный релиз скачивается и проверяется ffprobe как обычно.</p>
+<div class="login"><input id="search-text" placeholder="текст запроса" maxlength="200" style="width:22rem"><button id="search-run" type="button">Искать</button></div>
+<p id="search-summary" class="hint"></p>
+<section><table class="cand"><thead><tr><th>Релиз</th><th>Источник</th><th>Качество</th><th>Размер</th><th>Сиды</th><th>Вывод</th></tr></thead><tbody id="search-results"></tbody></table></section></details>
 <details><summary>Технические подробности</summary>
 <details><summary>Кандидаты, evidence и причины выбора (JSON)</summary><pre id="decision"></pre></details>
 <details><summary>Выбранный релиз</summary><pre id="candidate"></pre></details>
@@ -71,6 +76,10 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 </section>
 <details><summary>Профиль качества</summary><pre id="profiles"></pre></details>
 <details><summary>Метрики</summary><pre id="metrics"></pre></details>
+</section>
+<section id="page-calendar" class="page" hidden><h2>Календарь серий</h2>
+<p class="hint">Отслеживаемые серии по дате выхода: прошедшая неделя и ближайшие 60 дней. Даты — из Seerr/TMDB.</p>
+<section><table class="cand"><thead><tr><th>Дата</th><th>Сериал</th><th>Серия</th><th>Состояние</th></tr></thead><tbody id="calendar"></tbody></table></section>
 </section>
 <form id="config-form">
 <section id="page-sources" class="page" hidden><h2>Источники поиска</h2>
@@ -110,9 +119,9 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <div class="login"><input id="new-studio" placeholder="другая студия"><button id="add-studio" type="button">Добавить студию</button></div>
 <p class="hint">Студия распознаётся в названии раздачи и в строках «Аудио»/«Перевод» описания.</p></fieldset>
 <fieldset><legend>Улучшение качества</legend><div class="grid">
-<label class="field">Искать релиз лучше для готовых фильмов, раз в N часов (0 — не искать)<input id="upgrade_check_hours" type="number" min="0" max="2160"></label>
+<label class="field">Искать релиз лучше для готовых фильмов и сериалов, раз в N часов (0 — не искать)<input id="upgrade_check_hours" type="number" min="0" max="2160"></label>
 <label class="field"><span>Заменять автоматически</span><input id="auto_upgrade" type="checkbox"></label></div>
-<p class="hint">«Лучше» — выше разрешение из основного списка или на 10+ баллов выше оценка (например, дубляж вместо многоголосой). Без автозамены найденный релиз показывается в карточке фильма с кнопкой «Заменить».</p></fieldset>
+<p class="hint">«Лучше» — выше разрешение из основного списка или на 10+ баллов выше оценка (например, дубляж вместо многоголосой). Без автозамены найденный релиз показывается в карточке заявки с кнопкой «Заменить». Сериал сравнивается только по разрешению, и заменяются только серии, которые импортировал сам aiarr.</p></fieldset>
 <fieldset><legend>Скорость qBittorrent по расписанию</legend><div class="grid">
 <label class="field"><span>Ограничивать скорость по расписанию</span><input id="speed_schedule_enabled" type="checkbox"></label>
 <label class="field">Ограничивать с, ч<input id="speed_limited_from_hour" type="number" min="0" max="23"></label>
@@ -122,7 +131,8 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <label class="field">Часовой пояс, UTC+<input id="utc_offset_hours" type="number" min="-12" max="14"></label></div>
 <p class="hint">Например, с 8 до 1 — днём и вечером торренты не забивают канал, ночью качают на полной скорости. Используется «альтернативный лимит» qBittorrent; встроенный планировщик qBittorrent aiarr отключает, чтобы они не спорили.</p></fieldset>
 <fieldset><legend>Чистка раздач</legend><div class="grid">
-<label class="field">Убирать из qBittorrent через N дней после загрузки (0 — не убирать)<input id="cleanup_after_days" type="number" min="0" max="3650"></label></div>
+<label class="field">Убирать из qBittorrent через N дней после загрузки (0 — не убирать)<input id="cleanup_after_days" type="number" min="0" max="3650"></label>
+<label class="field">…или когда рейтинг раздачи достигнет (0 — не учитывать)<input id="cleanup_ratio" type="number" min="0" max="100" step="0.1"></label></div>
 <p class="hint">Файл в библиотеке — отдельная жёсткая ссылка и остаётся. Место на диске это почти не освобождает (данные общие), зато раздача больше не висит в списке. Убираются только торренты, все импортированные файлы которых на месте.</p></fieldset>
 <fieldset><legend>Подключения</legend><div class="grid">
 <label class="field">qBittorrent URL<input id="qbit_url" type="url"></label>
@@ -139,6 +149,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <label class="field">Одновременные загрузки<input id="max_downloads" type="number" min="1" max="10"></label>
 <label class="field">Повторных попыток<input id="max_attempts" type="number" min="1" max="10"></label>
 <label class="field">Кандидатов на обогащение<input id="enrichment_limit" type="number" min="1" max="100"></label>
+<label class="field">Хранить карточки релизов, ч (0 — не хранить)<input id="card_cache_hours" type="number" min="0" max="2160"></label>
 <label class="field">Смена раздачи без скачивания, мин<input id="stall_minutes" type="number" min="1" max="1440"></label>
 <label class="field">Скорость запасной раздачи, КиБ/с<input id="backup_kib" type="number" min="1"></label>
 <label class="field">Минимум сидов<input id="min_seeders" type="number" min="0"></label>
@@ -166,7 +177,7 @@ function clearSession(){
  token='';signedIn=false;selected=null;config=null;byId('key').value='';byId('dashboard').hidden=true;
  byId('inspection').hidden=true;byId('login').hidden=false;
  byId('provider-list').replaceChildren();byId('config-form').reset();
- for(const id of ['jobs','sources','known-sources','profiles','metrics','decision','candidate','history','mode','disk','speed','job-title','provider-health'])byId(id).textContent='';
+ for(const id of ['jobs','sources','known-sources','profiles','metrics','decision','candidate','history','mode','disk','speed','job-title','provider-health','calendar','search-results','search-summary'])byId(id).textContent='';
 }
 async function api(path,method='GET',body=null){
  const headers={'X-Aiarr-UI':'1'};if(token)headers['X-Api-Key']=token;
@@ -199,7 +210,8 @@ function addProvider(value={}){
   ['Имя','name','text'],['Протокол','protocol','select'],['URL','url','url'],
   ['Хост карточки','source_host','text'],['CSS-селектор карточки','details_selector','text'],
   ['Адаптер карточки','details_adapter','select'],['Кодировка','encoding','text'],
-  ['Интервал, сек','interval','number'],['Доверенный шлюз','trusted_gateway','checkbox'],
+  ['Интервал, сек','interval','number'],['Категории Torznab (2000,5000; пусто — все)','categories','text'],
+  ['Доверенный шлюз','trusted_gateway','checkbox'],
   ['Доверенный источник','trusted_source','checkbox'],['API-ключ Torznab/Prowlarr','api_key','password'],
   ['Cookie источника','cookie','password']]){
   const initial=type==='password'?value[key+'_configured']:value[key];
@@ -244,7 +256,7 @@ function renderConfig(){
  byId('backup_kib').value=Math.round(s.backup_download_limit/1024);
  byId('min_seeders').value=s.min_seeders;
  byId('min_mbit').value=s.min_download_speed*8/1e6;byId('max_eta_hours').value=s.max_eta_seconds/3600;
- for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days'])byId(key).value=s[key];
+ for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days','cleanup_ratio','card_cache_hours'])byId(key).value=s[key];
  for(const key of ['auto_upgrade','speed_schedule_enabled'])byId(key).checked=Boolean(s[key]);
  byId('speed_dl_mib').value=Math.round(s.speed_limit_download/104857.6)/10;byId('speed_ul_mib').value=Math.round(s.speed_limit_upload/104857.6)/10;
  for(const key of ['qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key']){
@@ -268,7 +280,7 @@ function collectConfig(){
  const providers=[...byId('provider-list').children].map(box=>{
   const provider={};for(const input of box.querySelectorAll('[data-setting]')){
    const key=input.dataset.setting;provider[key]=input.type==='checkbox'?input.checked:
-    key==='interval'?Number(input.value):input.value.trim();
+    key==='interval'?Number(input.value):key==='categories'?input.value.split(',').map(x=>Number(x.trim())).filter(x=>Number.isInteger(x)&&x>0):input.value.trim();
   }return provider;
  });
  const values={policy,providers,reserve_bytes:Number(byId('reserve_gib').value)*1073741824,
@@ -278,7 +290,7 @@ function collectConfig(){
   max_eta_seconds:Math.round(Number(byId('max_eta_hours').value)*3600),
   speed_limit_download:Math.round(Number(byId('speed_dl_mib').value)*1048576),
   speed_limit_upload:Math.round(Number(byId('speed_ul_mib').value)*1048576)};
- for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days'])values[key]=Number(byId(key).value);
+ for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days','cleanup_ratio','card_cache_hours'])values[key]=Number(byId(key).value);
  for(const key of ['auto_upgrade','speed_schedule_enabled'])values[key]=byId(key).checked;
  for(const key of ['qbit_url','qbit_username','jellyfin_url','seerr_url','deepseek_model',
   'qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key'])values[key]=byId(key).value.trim();
@@ -300,7 +312,7 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  WAITING_FOR_JELLYFIN:'Файл добавлен, ожидается сканирование Jellyfin',
  ALREADY_IN_LIBRARY:'Уже есть в Jellyfin',DRY_RUN_SELECTED:'Релиз найден, загрузка отключена',
  INSUFFICIENT_SPACE:'Недостаточно места на диске',DOWNLOAD_STALLED_NO_PEERS:'Раздачи не качаются — выбираются следующие релизы',BACKUP_PROMOTED:'Основная раздача стояла — качается запасная',DOWNLOAD_TOO_SLOW:'Раздача слишком медленная — выбирается другая',DOWNLOAD_SLOW_NO_ALTERNATIVE:'Качается медленно, других подходящих раздач нет',DOWNLOAD_QUEUE_LIMIT:'Очередь загрузок заполнена',
- VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного',RUSSIAN_AUDIO_NOT_TAGGED:'Не подтверждена русская аудиодорожка',DOWNLOAD_REMOVED:'Закачка удалена из qBittorrent',
+ VIDEO_RESOLUTION_BELOW_POLICY:'Разрешение видео ниже заданного — берётся другой релиз',RUSSIAN_AUDIO_NOT_TAGGED:'В файле нет русской дорожки — берётся другой релиз',DOWNLOAD_REMOVED:'Закачка удалена из qBittorrent',
  SEERR_REQUEST_DELETED:'Заявка удалена в Seerr, файлы удаляются',SEERR_FILE_REMOVED:'Файл удалён из библиотеки',
  SEERR_CLEANUP_DONE:'Файлы и торрент удалены',SEERR_CLEANUP_RETRY:'Удаление повторится позже',
  IMPORT_INODE_MISMATCH:'Файл в библиотеке заменён вручную — не удалён',
@@ -314,8 +326,11 @@ const reasons={PARTIAL_SEASON:'Часть серий уже доступна, о
  MANUAL_RELEASE_SOURCE_GONE:'Источник выбранного релиза отключён',MANUAL_RELEASE_NOT_DOWNLOADABLE:'Выбранный релиз не пройдёт проверку',
  UPGRADE_AVAILABLE:'Найден релиз лучше',UPGRADE_STARTED:'Идёт замена на релиз лучше',UPGRADE_CANCELLED:'Замена отменена, файл прежний',
  UPGRADED:'Файл заменён на релиз лучше',SEEDING_CLEANED:'Раздача убрана из qBittorrent, файл в библиотеке остался',
- VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE:'Разрешение файла не совпало с заявленным в раздаче',ALREADY_IN_LIBRARY:'Уже есть в Jellyfin'};
-const candidateReasons={NOT_VIDEO_RELEASE:'не видео (книга, музыка, игра)',VIDEO_CODEC_NOT_ALLOWED:'кодек не из списка',FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
+ VIDEO_RESOLUTION_DIFFERS_FROM_RELEASE:'Разрешение файла не совпало с заявленным в раздаче — берётся другой релиз',
+ VIDEO_CODEC_DIFFERS_FROM_RELEASE:'Кодек файла не совпал с заявленным — берётся другой релиз',VIDEO_CODEC_MISMATCH:'Кодек файла не из списка — берётся другой релиз',
+ MISSING_VIDEO_OR_DURATION:'В файле нет видео — берётся другой релиз',AMBIGUOUS_MEDIA_FILES:'В раздаче не один видеофайл — берётся другой релиз',
+ FILE_EPISODE_MAPPING_UNVERIFIED:'Не удалось определить номера серий в файлах'};
+const candidateReasons={VERIFICATION_FAILED:'скачанный файл не прошёл проверку',NOT_VIDEO_RELEASE:'не видео (книга, музыка, игра)',VIDEO_CODEC_NOT_ALLOWED:'кодек не из списка',FILE_TOO_LARGE:'файл больше лимита',IDENTITY_MISMATCH:'другое название',DOWNLOAD_STALLED_NO_PEERS:'не качалась или слишком медленная',YEAR_UNVERIFIED:'год не совпадает или не указан',
  NOT_A_MOVIE:'это серия, а не фильм',SEASON_MISMATCH:'не тот сезон',EPISODE_MISMATCH:'не те серии',
  SOURCE_NOT_ALLOWED:'источник видео явно плохого качества (экранка/телесинк/телесине)',RESOLUTION_NOT_ALLOWED:'разрешение не подходит',
  CODEC_EVIDENCE_CONFLICT:'противоречивые данные о кодеке',TOO_LARGE:'слишком большой размер',
@@ -337,11 +352,49 @@ const scoreText=c=>Object.entries(c.score||{}).filter(([,v])=>v).map(([k,v])=>SC
 const UNCHOOSABLE=new Set(['TOO_LARGE','FILE_TOO_LARGE','VIDEO_CODEC_NOT_ALLOWED','NOT_VIDEO_RELEASE']);
 const choosable=c=>!(c.reasons||[]).some(x=>UNCHOOSABLE.has(x))&&!((c.reasons||[]).includes('RESOLUTION_NOT_ALLOWED')&&c.parsed?.screen_size);
 let currentJob=null;
-async function chooseRelease(c){
+async function chooseRelease(c,query=null){
  const r=c.release||{},replacing=currentJob&&(currentJob.state==='AVAILABLE'||currentJob.replacing);
  if(!confirm((replacing?'Заменить файл в библиотеке на релиз':'Скачать релиз')+' «'+r.title+'»?'+
   (replacing?' Старый файл останется, пока новый не пройдёт проверку.':' Текущая закачка этой заявки будет удалена.')))return;
- await api('/admin/jobs/'+selected+'/choose','POST',{provider:r.provider,release_id:r.release_id});await refresh();
+ const body={provider:r.provider,release_id:r.release_id};if(query)body.query=query;
+ await api('/admin/jobs/'+selected+'/choose','POST',body);await refresh();
+}
+function renderSearch(data){
+ const body=byId('search-results');body.replaceChildren();
+ const failed=(data.errors||[]).map(e=>e.provider+': '+(OUTCOMES[e.outcome]||e.outcome));
+ byId('search-summary').textContent='Найдено '+data.candidates.length+' раздач по запросу «'+data.query+'».'+
+  (failed.length?' Не ответили: '+failed.join(', ')+'.':'');
+ const list=data.candidates.map(c=>({c,pct:candidatePercent(c)})).sort((a,b)=>(b.pct-a.pct)||((b.c.release.seeders||0)-(a.c.release.seeders||0)));
+ for(const {c,pct} of list){
+  const r=c.release||{},p=c.parsed||{},tr=document.createElement('tr');
+  const problems=[...(c.reasons||[]),...(c.unknown||[])].map(x=>candidateReasons[x]||x);
+  const cells=[r.title||'',r.provider||'',[p.screen_size,p.source,p.video_codec].filter(Boolean).join(' · ')||'—',sizeText(r.size),r.seeders??'—'];
+  cells.forEach((value,i)=>{const td=document.createElement('td');td.textContent=String(value);
+   if(i===0){td.className='title';if(r.details_url&&/^https?:/.test(r.details_url)){td.textContent='';
+    const a=document.createElement('a');a.href=r.details_url;a.target='_blank';a.rel='noopener noreferrer';a.textContent=r.title;td.append(a);}}
+   tr.append(td);});
+  const td=document.createElement('td');const pctEl=document.createElement('div');pctEl.className='pct';pctEl.textContent=pct+'%';
+  const note=document.createElement('div');note.textContent=problems.length?'✖ '+problems.join('; '):'✔ по названию подходит';td.append(pctEl,note);
+  if(choosable(c)&&currentJob&&!['CANCELLED','VERIFYING','IMPORTING'].includes(currentJob.state)){
+   const pick=document.createElement('button');pick.type='button';pick.textContent='Скачать этот';
+   pick.onclick=()=>run(()=>chooseRelease(c,data.query));td.append(pick);}
+  tr.append(td);body.append(tr);
+ }
+}
+function renderCalendar(data){
+ const body=byId('calendar');body.replaceChildren();
+ if(!data.episodes.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=4;
+  td.textContent='В ближайшие дни серий нет.';tr.append(td);body.append(tr);return;}
+ for(const e of data.episodes){
+  const tr=document.createElement('tr');if(e.date===data.today)tr.className='fit';
+  const state=e.available?'✔ есть в Jellyfin':e.aired?'⏳ вышла, ищется':'выйдет';
+  const cells=[new Date(e.date+'T12:00:00').toLocaleDateString('ru-RU',{weekday:'short',day:'numeric',month:'short'}),e.title||'',e.episode,state];
+  cells.forEach((value,i)=>{const td=document.createElement('td');td.textContent=value;
+   if(i===1){td.textContent='';const a=document.createElement('a');a.href='#jobs';a.textContent=value;
+    a.onclick=()=>run(()=>inspect(e.job_id));td.append(a);}
+   if(i===3)td.className=e.available?'stat-ok':e.aired?'stat-bad':'';tr.append(td);});
+  body.append(tr);
+ }
 }
 function renderCandidates(decision,chosen){
  const list=(decision?.candidates||[]).map(c=>({c,fit:!c.reasons?.length&&!c.unknown?.length,pct:candidatePercent(c)}));
@@ -376,8 +429,7 @@ function renderCandidates(decision,chosen){
    tr.append(td);});
   const td=document.createElement('td');const pctEl=document.createElement('div');pctEl.className='pct';
   pctEl.textContent=pct+'%';const note=document.createElement('div');note.textContent=verdict;td.append(pctEl,note);
-  if(!isChosen&&choosable(c)&&currentJob&&!['CANCELLED','VERIFYING','IMPORTING'].includes(currentJob.state)&&
-   !(currentJob.state==='AVAILABLE'&&parse(currentJob.work)?.kind==='series')){
+  if(!isChosen&&choosable(c)&&currentJob&&!['CANCELLED','VERIFYING','IMPORTING'].includes(currentJob.state)){
    const pick=document.createElement('button');pick.type='button';pick.textContent='Скачать этот';
    pick.onclick=()=>run(()=>chooseRelease(c));td.append(pick);}
   tr.append(td);body.append(tr);
@@ -456,7 +508,10 @@ function renderProgress(data){
   appendStep('Jellyfin подтвердил доступные файлы.');
 }
 async function inspect(id){
- const data=await api('/admin/jobs/'+id);selected=id;currentJob=data.job;
+ const data=await api('/admin/jobs/'+id);
+ if(selected!==id){byId('search-results').replaceChildren();byId('search-summary').textContent='';
+  byId('search-text').value=parse(data.job.work)?.title||'';}
+ selected=id;currentJob=data.job;
  byId('inspection').hidden=false;byId('job-title').textContent=(parse(data.job.work)?.title||'Задание')+' · #'+id;
  renderProgress(data);
  renderCandidates(parse(data.job.decision),parse(data.job.candidate));
@@ -570,8 +625,8 @@ function renderKnownSources(sources,indexers){
   'Из списка трекеров подключено '+active+' из 5; четыре студии озвучки распознаются в найденных раздачах.';
 }
 function route(){
- const page=['jobs','sources','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'jobs';
- for(const name of ['jobs','sources','settings'])byId('page-'+name).hidden=name!==page;
+ const page=['jobs','calendar','sources','settings'].includes(location.hash.slice(1))?location.hash.slice(1):'jobs';
+ for(const name of ['jobs','calendar','sources','settings'])byId('page-'+name).hidden=name!==page;
  for(const a of document.querySelectorAll('nav.top a'))a.classList.toggle('active',a.dataset.page===page);
 }
 window.addEventListener('hashchange',route);
@@ -581,6 +636,7 @@ async function refresh(){
  const [overview,sources,profiles,metrics]=await Promise.all([
   api('/admin/overview'),api('/admin/sources'),api('/admin/profiles'),api('/admin/metrics')]);
  renderJobs(overview);renderHealth(await api('/admin/provider-stats').catch(()=>[]));
+ renderCalendar(await api('/admin/calendar').catch(()=>({episodes:[]})));
  renderSources(sources);show('profiles',profiles);show('metrics',metrics);
  if(config===null){config=await api('/admin/config');renderConfig();}
  renderKnownSources(sources,await api('/admin/indexers').catch(()=>[]));
@@ -647,6 +703,10 @@ byId('key-login').onsubmit=event=>{event.preventDefault();run(async()=>{
 (async()=>{try{await enter();}catch(error){byId('login').hidden=false;byId('status').textContent=error.message;}})();
 byId('refresh').onclick=()=>run(refresh);
 byId('add-provider').onclick=()=>addProvider();
+byId('search-run').onclick=()=>run(async()=>{const query=byId('search-text').value.trim();
+ if(selected===null||query.length<2)return;byId('search-summary').textContent='⏳ ищем по всем источникам…';
+ renderSearch(await api('/admin/jobs/'+selected+'/search','POST',{query}));});
+byId('search-text').onkeydown=event=>{if(event.key==='Enter'){event.preventDefault();byId('search-run').click();}};
 byId('reload-config').onclick=()=>run(async()=>{config=await api('/admin/config');renderConfig();});
 byId('config-form').onsubmit=event=>{event.preventDefault();run(async()=>{
  const values=collectConfig();config=await api('/admin/config','PUT',{revision:config.revision,settings:values});

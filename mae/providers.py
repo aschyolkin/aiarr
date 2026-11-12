@@ -9,10 +9,25 @@ from defusedxml import ElementTree
 
 from mae.config import ProviderConfig
 from mae.domain import DownloadHandle, Evidence, Outcome, ProviderError, ReleaseDetails, SearchResult
+from mae.downloads import magnet_infohash
 from mae.enrichment import HTMLDetailsEnricher, RutorDetailsEnricher, card_image
 from mae.security import SafeHTTP, clean_text
 
 NON_VIDEO_CATEGORIES = {3, 4, 6, 7}
+
+
+def infohash_of(*values):
+    """v1 infohash from a 40-hex attribute or a magnet link; None when absent."""
+    for value in values:
+        value = (value or "").strip()
+        if re.fullmatch(r"[0-9a-fA-F]{40}", value):
+            return value.lower()
+        if value.startswith("magnet:"):
+            try:
+                return magnet_infohash(value)
+            except ValueError:
+                continue
+    return None
 
 
 class TorznabProvider:
@@ -22,6 +37,7 @@ class TorznabProvider:
         self.handles = {}
         self.descriptions = {}
         self.last_request = 0.0
+        self.id_params = None
         adapter = RutorDetailsEnricher if config.details_adapter == "rutor" else HTMLDetailsEnricher
         self.enricher = adapter(config) if config.details_selector else None
 
@@ -35,9 +51,35 @@ class TorznabProvider:
         if remaining > 0:
             time.sleep(remaining)
         self.last_request = time.monotonic()
+        if self.config.categories and params.get("t") != "caps":
+            params["cat"] = ",".join(str(c) for c in self.config.categories)
         return self.http.get(
             self.config.url, params={"apikey": self.config.api_key.get_secret_value(), **params}
         )
+
+    def id_search_params(self):
+        """ID parameters the indexer declares for movie and series searches."""
+        if self.id_params is None:
+            found = {}
+            root = self._xml(self._get(t="caps"))
+            for kind, tag in (("movie", "movie-search"), ("series", "tv-search")):
+                node = root.find(f"./searching/{tag}")
+                if node is not None and node.get("available") == "yes":
+                    found[kind] = {p.strip() for p in (node.get("supportedParams") or "").split(",")}
+            self.id_params = found
+        return self.id_params
+
+    def search_by_id(self, query):
+        """Releases the indexer itself links to this TMDB/TVDB id; [] if it cannot."""
+        try:
+            supported = self.id_search_params().get(query.kind, set())
+        except ProviderError:
+            return []  # The title search already reports a failing gateway.
+        if query.kind == "movie" and "tmdbid" in supported:
+            return self._results(self._xml(self._get(t="movie", tmdbid=query.external_id, limit=100)))
+        if query.kind == "series" and "tvdbid" in supported:
+            return self._results(self._xml(self._get(t="tvsearch", tvdbid=query.external_id, limit=100)))
+        return []
 
     def healthcheck(self):
         root = self._xml(self._get(t="caps"))
@@ -71,7 +113,9 @@ class TorznabProvider:
     def search(self, query):
         # Generic search is universally supported; no invented ID capabilities.
         suffix = f" {query.year}" if query.kind == "movie" and query.year else ""
-        root = self._xml(self._get(t="search", q=query.title + suffix, limit=100))
+        return self._results(self._xml(self._get(t="search", q=query.title + suffix, limit=100)))
+
+    def _results(self, root):
         if root.tag != "rss" or root.find("channel") is None:
             raise ProviderError(Outcome.PARSER_BROKEN)
         results = []
@@ -113,6 +157,7 @@ class TorznabProvider:
                     seeders=peers,
                     details_url=details,
                     published_at=item.findtext("pubDate"),
+                    infohash=infohash_of(attrs.get("infohash"), attrs.get("magneturl"), url),
                 )
             )
         return results
@@ -143,6 +188,9 @@ class TorznabProvider:
 
 class JSONProvider(TorznabProvider):
     """Documented JSON protocol for user-owned sources, not an arbitrary site API."""
+
+    def search_by_id(self, query):
+        return []
 
     def healthcheck(self):
         raw = json.loads(self._get(operation="health"))
@@ -320,7 +368,8 @@ class RutorProvider(NNMClubProvider):
             self.handles[rid] = DownloadHandle(url=magnet["href"])
             rows.append(
                 SearchResult(
-                    provider=self.config.name, release_id=rid, title=title, size=size, details_url=url
+                    provider=self.config.name, release_id=rid, title=title, size=size, details_url=url,
+                    infohash=infohash_of(magnet["href"]),
                 )
             )
         if not rows and soup.select_one("#index") is None:

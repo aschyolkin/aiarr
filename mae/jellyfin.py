@@ -8,6 +8,17 @@ from mae.verification import check_path
 class Jellyfin:
     def __init__(self, settings):
         self.settings = settings
+        self.items = None
+
+    def prime(self):
+        """List every movie and series once; coverage() then needs no query per work."""
+        with self.client() as client:
+            response = client.get(
+                "/Items",
+                params={"Recursive": "true", "Fields": "ProviderIds,Path", "IncludeItemTypes": "Movie,Series"},
+            )
+            response.raise_for_status()
+            self.items = response.json().get("Items", [])
 
     def client(self):
         key = self.settings.jellyfin_key.get_secret_value()
@@ -23,21 +34,26 @@ class Jellyfin:
 
     def coverage(self, work):
         namespace = "Tmdb" if work.kind == "movie" else "Tvdb"
+        kind = "Movie" if work.kind == "movie" else "Series"
         with self.client() as client:
-            response = client.get(
-                "/Items",
-                params={
-                    "Recursive": "true",
-                    "Fields": "ProviderIds,Path",
-                    "AnyProviderIdEquals": f"{namespace}.{work.external_id}",
-                    "IncludeItemTypes": "Movie" if work.kind == "movie" else "Series",
-                },
-            )
-            response.raise_for_status()
+            if self.items is not None:
+                listed = [item for item in self.items if item.get("Type") == kind]
+            else:
+                response = client.get(
+                    "/Items",
+                    params={
+                        "Recursive": "true",
+                        "Fields": "ProviderIds,Path",
+                        "AnyProviderIdEquals": f"{namespace}.{work.external_id}",
+                        "IncludeItemTypes": kind,
+                    },
+                )
+                response.raise_for_status()
+                listed = response.json().get("Items", [])
             # Verify IDs ourselves as well: an ignored filter must not mean available.
             items = [
                 item
-                for item in response.json().get("Items", [])
+                for item in listed
                 if str(item.get("ProviderIds", {}).get(namespace)) == str(work.external_id)
             ]
             if work.kind == "movie":

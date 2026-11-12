@@ -8,8 +8,8 @@
 - Python-движок (FastAPI + SQLite + один worker), заменил Radarr/Sonarr.
   Цепочка: Seerr (заявки) → поиск по источникам → qBittorrent → проверка ffprobe
   → импорт hardlink в библиотеку → Jellyfin.
-- Код: `/home/andrey/work/openwrt/media-acquisition-engine` (git, ветка main).
-  Проверки: `uv run pytest -q` (268 тестов), `uv run ruff check mae migrations tests`.
+- Код: `/home/andrey/openwrt/media-acquisition-engine` (git, ветка master).
+  Проверки: `uv run pytest -q` (380 тестов на 2026-11-12), `uv run ruff check mae migrations tests`.
 - Production: TrueNAS `10.110.111.2`, custom-приложение `aiarr`
   (контейнеры `ix-aiarr-api-1`, `ix-aiarr-worker-1`, `ix-aiarr-migrate-1`).
   Текущий образ: `media-acquisition-engine:277add2`, `MAE_DRY_RUN=false`.
@@ -75,7 +75,7 @@ Prowlarr: `http://10.110.111.2:30050`, индексаторы 1 RuTor, 8 BigFANG
   `rutor.org` — 403 CloudFlare.
 - LostFilm.tv, AlexFilm, Red Head Sound, Flarrow Films — не трекеры; студии
   распознаются по названию озвучки в раздачах (`STUDIOS` в `mae/parsing.py`,
-  `studio_weights` в политике). `mae/studio_catalogs.py` ни к чему не подключён.
+  `studio_weights` в политике). `mae/studio_catalogs.py` удалён 2026-11-12 (не использовался).
 
 Пользователь обещал найти замены для недоступных источников.
 

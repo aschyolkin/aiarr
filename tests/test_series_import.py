@@ -160,7 +160,10 @@ def test_every_episode_probed_before_publishing_pack(db, series_env):
     downloader.files.return_value = [{"name": p.name} for p in sorted(folder.glob("*.mkv"))]
     Worker(settings, db, [], downloader).tick()
     assert db.job(job_id)["reason"] == "RUSSIAN_AUDIO_NOT_TAGGED"
-    assert db.job(job_id)["state"] == "NEEDS_REVIEW"
+    # The torrent is dropped and the next search picks another release.
+    job = db.job(job_id)
+    assert (job["state"], job["torrent_hash"], job["attempts"]) == ("RETRY_SCHEDULED", None, 1)
+    downloader.delete_owned.assert_called_once()
     assert not db.execute("SELECT * FROM imports")
     assert not list((settings.store / "serials").glob("**/*.mkv"))
 
