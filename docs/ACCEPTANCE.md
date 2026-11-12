@@ -717,3 +717,14 @@ failed verification. After: both containers up, api healthy, `/admin` 200. Jobs 
 a free download slot. Not yet observed live: a DeepSeek verdict text and the language switch
 in a real browser (both covered by tests and a jsdom run).
 Rollback: set the three images back to `96f6fd8` (no schema change).
+
+## Production deployment of d2eead6 — 2026-11-12
+
+App `aiarr` moved from `:fdc8798` through `:7b997b1` and `:343f38b` to `:d2eead6` (no migration; ZFS
+snapshots `data/apps/aiarr-state@pre-<sha>-20261112` before each step). Adds the "chosen by the AI,
+review needed" mark (`ai_pending` in `/admin/overview`, `POST /admin/jobs/{id}/ack-ai`) and support for
+series without a TVDB id: the Sonarr facade answers Seerr's name search through Seerr `/search` with
+TMDB-based ids (offset 1e9). Checked live: `GET /sonarr/api/v3/series/lookup?term=Где лифт` returns the
+show with id 1000251588; overview carries `ai_pending`. Not yet observed: the Seerr "match this series"
+dialog in a browser, and a full request of such a series.
+Rollback: set the three images back to `fdc8798` (no schema change).
