@@ -7,6 +7,12 @@ torrent trackers. Users make requests in [Seerr](https://github.com/seerr-team/s
 aiarr finds a release, downloads it with qBittorrent, verifies the actual file with
 ffprobe, publishes it to the library as a hardlink and waits until Jellyfin sees it.
 
+> **AI is used when choosing a release.** Fixed rules decide what is acceptable and score the
+> candidates. When a release card is ambiguous (for example the audio language or codec is
+> unclear), an LLM ([DeepSeek](docs/DEEPSEEK.md)) reads it and may only return claims that quote
+> the card; the downloaded file is then verified by ffprobe regardless. The step is optional,
+> budgeted, and without an API key unclear releases simply wait for manual review.
+
 ```
 Seerr request ─► search in sources ─► pick a release ─► qBittorrent
                                                              │
