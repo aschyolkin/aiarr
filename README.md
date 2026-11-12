@@ -45,7 +45,13 @@ on a home server.
 - Russian tracker titles and cards are parsed (`Рус / Eng (2024) [WEB-DL 1080p] | D, P2`).
 - An optional, budgeted DeepSeek step interprets ambiguous cards. Every claim must quote
   the evidence it comes from, and the file is checked by ffprobe afterwards anyway.
-  Without a key everything works, unclear releases just wait for review.
+- When no release is fully confirmed (for example the card does not state the audio
+  language), the AI decides whether to download the best one and records the reason, in
+  both languages, in the request's progress. Without a DeepSeek key the best-scored release
+  is taken. ffprobe then checks the file; a bad one is discarded and the next release is
+  tried, and when none are left the request waits for new releases instead of stopping for
+  review. Turn it off with *Download the best release even when some facts are unconfirmed*.
+  A manually chosen release that fails verification still waits for you.
 
 **Downloading**
 - A runner-up release starts at a low speed beside the primary one. A dead or too slow
@@ -67,7 +73,8 @@ on a home server.
 **Operations**
 - Web UI at `/admin`: request cards with progress, candidate table with the reason for
   every decision, event timeline, source health, episode calendar and all settings.
-  Sign in through an open Seerr administrator session, or with the API key.
+  Sign in through an open Seerr administrator session, or with the API key. The language
+  (English/Russian) is switched with the EN/RU button in the menu.
 - Seerr-compatible facade (`/radarr/api/v3`, `/sonarr/api/v3`): Seerr talks to aiarr as
   if it were Radarr and Sonarr.
 - Deleting a request in Seerr removes the files and torrent aiarr owns, after checking

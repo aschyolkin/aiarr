@@ -21,7 +21,7 @@ from mae.errors import failure
 from mae.importing import destination_for
 from mae.jellyfin import Jellyfin
 from mae.parsing import apply_resolution_claims, episode_keys, normalize_title, parse_candidate
-from mae.policies import evaluate
+from mae.policies import evaluate, score_of
 from mae.providers import TorznabProvider, make_provider
 from mae.verification import check_path, probe, publish_hardlink, resolution_class, verify
 
@@ -93,6 +93,8 @@ class Worker:
         except (ValueError, FileNotFoundError) as exc:
             # Exceptions are only persisted as bounded codes, never URLs/bodies.
             code = str(exc) if re.fullmatch(r"[A-Z_]{1,80}", str(exc)) else type(exc).__name__
+            if code in self.PREPARE_REJECTS and self.skip_release(job, code):
+                return
             self.db.transition(job["id"], "NEEDS_REVIEW", code)
         except Exception as exc:
             code, dependency = failure(exc, self.settings)
@@ -581,9 +583,16 @@ class Worker:
                 return
             ranked = [chosen]
         else:
-            decisions, errors, eligible, skipped_stalled = self.search_candidates(job, work)
+            unproven = []
+            decisions, errors, eligible, skipped_stalled = self.search_candidates(
+                job, work, tentative=unproven if self.settings.trust_unproven else None
+            )
+            verdict = None
+            if not eligible and unproven:
+                eligible, verdict = self.judge(job, work, unproven)
             decision = json.dumps(
-                {"policy": self.settings.policy.model_dump(), "candidates": decisions, "errors": errors}
+                {"policy": self.settings.policy.model_dump(), "candidates": decisions, "errors": errors,
+                 "verdict": verdict}
             )
             self.db.transition(job["id"], "SELECTED" if eligible else "WAITING_FOR_RELEASE", decision=decision)
             if not eligible:
@@ -595,7 +604,7 @@ class Worker:
                 # wrong movie/season or forbidden source into a review candidate.
                 state = (
                     "NEEDS_REVIEW"
-                    if any(c["unknown"] and not c["reasons"] for c in decisions)
+                    if any(c["unknown"] and not c["reasons"] for c in decisions) and not verdict
                     else "WAITING_FOR_RELEASE"
                 )
                 if errors and not decisions:
@@ -611,7 +620,7 @@ class Worker:
                         self.retry(job, reason, max(e["retry_after"] for e in errors))
                         return
                     state = "AUTH_REQUIRED"
-                self.db.transition(job["id"], state, "NO_PROVEN_CANDIDATE", delay=3600)
+                self.db.transition(job["id"], state, "AI_DECLINED" if verdict else "NO_PROVEN_CANDIDATE", delay=3600)
                 return
             ranked = self.rank(eligible, work, job["id"])
         _, candidate, provider = ranked[0]
@@ -666,7 +675,7 @@ class Worker:
             eligible, key=lambda item: (coverage(item), *self.download_preference(item, slow_keys)), reverse=True
         )
 
-    def search_candidates(self, job, work, use_llm=True, progress=True):
+    def search_candidates(self, job, work, use_llm=True, progress=True, tentative=None):
         """Search every source; returns decisions, errors, eligible and whether stalled were skipped.
 
         Sources are queried in parallel, each at its own request interval.
@@ -686,7 +695,7 @@ class Worker:
             rejected_hashes.add(row["torrent_hash"])
         studios = list(self.settings.policy.studio_weights)
         # One slot per source keeps the merged order independent of thread timing.
-        slots = [{"decisions": [], "errors": [], "eligible": []} for _ in self.providers]
+        slots = [{"decisions": [], "errors": [], "eligible": [], "tentative": []} for _ in self.providers]
         shared = {"selected": False, "skipped_stalled": False, "published": 0.0}
         lock = threading.Lock()
         main = threading.current_thread()
@@ -762,7 +771,13 @@ class Worker:
                             candidate = evaluate(parsed_candidate, work, self.settings.policy)
                     slot["decisions"].append(candidate.model_dump())
                     publish_progress()
-                    if candidate.reasons or candidate.unknown:
+                    if candidate.reasons:
+                        continue
+                    if candidate.unknown:
+                        # Unconfirmed facts that ffprobe settles after the download.
+                        if progress and set(candidate.unknown) <= self.TRUSTED_UNKNOWN:
+                            scored = candidate.model_copy(update={"score": score_of(candidate, self.settings.policy)})
+                            slot["tentative"].append((sum(scored.score.values()), scored, provider))
                         continue
                     slot["eligible"].append((sum(candidate.score.values()), candidate, provider))
                     shared["selected"] = True
@@ -791,8 +806,41 @@ class Worker:
                     self.monitor_downloads(job["id"])
                 for future in finished:
                     future.result()
+        if tentative is not None:
+            tentative.extend(self.unique_torrents(merged("tentative")))
         return merged("decisions"), merged("errors"), self.unique_torrents(merged("eligible")), shared[
             "skipped_stalled"]
+
+    def judge(self, job, work, unproven):
+        """Decide on releases with unconfirmed facts: DeepSeek picks one or declines, and says why.
+
+        Without DeepSeek (no key, budget used up, error) the best-scored release is taken by rule.
+        Returns (eligible, verdict); an empty eligible list means the release was declined.
+        """
+        ranked = self.rank(unproven, work, job["id"])[:5]
+        answer = DeepSeek(self.settings, self.db).decide(
+            work, [item[1] for item in ranked],
+            request_key=f"verdict:{job['id']}:generation:{job['generation']}",
+        )
+        if answer is None:
+            title = ranked[0][1].release.title
+            return ranked[:1], {
+                "download": True, "by": "rules", "release": title,
+                "reason_ru": "ИИ недоступен: взят лучший по баллам релиз, часть данных не подтверждена. "
+                             "Файл проверит ffprobe, при расхождении будет взят следующий.",
+                "reason_en": "The AI is unavailable: the best-scored release was taken although some facts are "
+                             "unconfirmed. ffprobe will check the file and the next release is used if it fails.",
+            }
+        verdict = {"download": answer.download, "by": "deepseek", "reason_ru": answer.reason_ru,
+                   "reason_en": answer.reason_en}
+        if not answer.download:
+            return [], verdict
+        verdict["release"] = ranked[answer.choice][1].release.title
+        return [ranked[answer.choice]], verdict
+
+    # Unknown facts the downloaded file settles: size (checked against the torrent metadata),
+    # the Russian audio track and the codec (both read by ffprobe).
+    TRUSTED_UNKNOWN = frozenset({"size", "russian_audio", "compatible_video_codec"})
 
     @staticmethod
     def unique_torrents(eligible):
@@ -1253,6 +1301,22 @@ class Worker:
         self.switch_release(job, "DOWNLOAD_TOO_SLOW", primary_moving=True)
         return True
 
+    # Faults of the torrent contents seen before the download starts.
+    PREPARE_REJECTS = frozenset({
+        "TORRENT_EPISODE_MAPPING_UNVERIFIED", "TORRENT_OVERLAPS_EXISTING_OR_UNREQUESTED_EPISODES",
+        "TORRENT_FILE_COVERS_UNMONITORED_EPISODE", "FILE_SIZE_EXCEEDS_POLICY",
+    })
+
+    def skip_release(self, job, code):
+        """Drop an unusable release and search again; a manually chosen one stays for review."""
+        current = self.db.job(job["id"])
+        candidate = json.loads(current["candidate"] or "{}")
+        if (candidate.get("parsed") or {}).get("manual") or not candidate.get("release"):
+            return False
+        self.db.reject_release(job["id"], current["candidate"], None, code)
+        self.db.transition(job["id"], "RETRY_SCHEDULED", code, delay=5, candidate=None, reserved=0)
+        return True
+
     # Faults of the downloaded file itself: another release may well be fine.
     VERIFY_REJECTS = frozenset({
         "MISSING_VIDEO_OR_DURATION", "VIDEO_CODEC_MISMATCH", "VIDEO_DIMENSIONS_UNSUPPORTED",
@@ -1279,14 +1343,18 @@ class Worker:
             return True
         attempts = self.db.job(job["id"])["attempts"] + 1
         manual = (json.loads(job["candidate"] or "{}").get("parsed") or {}).get("manual")
-        if manual or attempts >= self.settings.max_attempts:
+        if manual:
             return False
         self.queue_discard(job["id"], job["torrent_hash"])
         if job["backup_hash"]:
             self.queue_discard(job["id"], job["backup_hash"])
+        exhausted = attempts >= self.settings.max_attempts
+        # Out of attempts: rejected releases stay excluded, so the hourly search only
+        # tries releases that appear later instead of stopping for a review.
         self.db.transition(
-            job["id"], "RETRY_SCHEDULED", code, attempts=attempts, torrent_hash=None, candidate=None, reserved=0,
-            backup_hash=None, backup_candidate=None, backup_reserved=0,
+            job["id"], "WAITING_FOR_RELEASE" if exhausted else "RETRY_SCHEDULED", code,
+            attempts=0 if exhausted else attempts, torrent_hash=None, candidate=None, reserved=0,
+            backup_hash=None, backup_candidate=None, backup_reserved=0, **({"delay": 3600} if exhausted else {}),
         )
         self.discard_downloads()
         return True

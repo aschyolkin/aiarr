@@ -138,6 +138,8 @@ class Settings(BaseSettings):
     upgrade_check_hours: int = Field(default=24, ge=0, le=24 * 90)
     # Replace without asking once a clearly better release is found.
     auto_upgrade: bool = False
+    # Download the best release even when some facts are unconfirmed; ffprobe decides afterwards.
+    trust_unproven: bool = True
     # qBittorrent alternative speed limits between these local hours.
     speed_schedule_enabled: bool = False
     speed_limited_from_hour: int = Field(default=8, ge=0, le=23)

@@ -18,7 +18,7 @@ EDITABLE = frozenset({
     "deepseek_daily_tokens", "deepseek_request_calls", "deepseek_request_tokens",
     "max_attempts", "enrichment_limit", "reserve_bytes", "max_downloads",
     "stall_seconds", "backup_download_limit", "min_seeders", "min_download_speed", "max_eta_seconds",
-    "upgrade_check_hours", "auto_upgrade", "speed_schedule_enabled", "speed_limited_from_hour",
+    "upgrade_check_hours", "auto_upgrade", "trust_unproven", "speed_schedule_enabled", "speed_limited_from_hour",
     "speed_limited_to_hour", "speed_limit_download", "speed_limit_upload", "utc_offset_hours",
     "cleanup_after_days", "cleanup_ratio", "card_cache_hours",
 })

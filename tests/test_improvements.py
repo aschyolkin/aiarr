@@ -6,13 +6,15 @@ from pathlib import Path
 from unittest.mock import Mock
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from mae.api import create_app
 from mae.config import Policy, ProviderConfig
+from mae.deepseek import Verdict, validate_verdict
 from mae.domain import DownloadHandle, Evidence, ReleaseDetails, SearchResult, Work
 from mae.parsing import parse_candidate
-from mae.policies import evaluate
+from mae.policies import evaluate, score_of
 from mae.providers import TorznabProvider
 from mae.worker import Worker
 
@@ -137,24 +139,75 @@ def test_failed_verification_moves_on_to_another_release(settings, db, movie, tm
     assert sum("VERIFICATION_FAILED" in d["reasons"] for d in decisions) == 2
 
 
-def test_last_attempt_and_manual_choice_stay_for_review(settings, db, movie, tmp_path, monkeypatch):
+def verification_fails(settings, db, movie, tmp_path, monkeypatch, candidate):
     store = tmp_path / "store"
     downloads = store / "downloads/films"
     downloads.mkdir(parents=True)
     (downloads / "bad.mkv").write_bytes(b"x")
     settings = settings.model_copy(update={"store": store, "dry_run": False, "max_attempts": 1})
     job_id = db.submit(movie, False)
-    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40,
-                  candidate=candidate_json("Example.2024.1080p.WEB-DL.H.264", "bad", movie))
+    db.transition(job_id, "DOWNLOADING", torrent_hash="a" * 40, candidate=candidate)
     monkeypatch.setattr("mae.worker.probe", Mock(side_effect=ValueError("VIDEO_CODEC_MISMATCH")))
     monkeypatch.setattr("mae.worker.Jellyfin.coverage", lambda _s, _w: set())
     downloader = Mock()
     downloader.info.return_value = {"progress": 1, "state": "uploading", "save_path": str(downloads)}
     downloader.files.return_value = [{"name": "bad.mkv"}]
     Worker(settings, db, [], downloader).tick()
-    job = db.job(job_id)
+    return db.job(job_id), downloader
+
+
+def test_manual_choice_stays_for_review(settings, db, movie, tmp_path, monkeypatch):
+    chosen = json.loads(candidate_json("Example.2024.1080p.WEB-DL.H.264", "bad", movie))
+    chosen["parsed"]["manual"] = True
+    job, downloader = verification_fails(settings, db, movie, tmp_path, monkeypatch, json.dumps(chosen))
     assert (job["state"], job["reason"], job["torrent_hash"]) == ("NEEDS_REVIEW", "VIDEO_CODEC_MISMATCH", "a" * 40)
     downloader.delete_owned.assert_not_called()
+
+
+def test_last_attempt_waits_for_new_releases_instead_of_review(settings, db, movie, tmp_path, monkeypatch):
+    job, _ = verification_fails(settings, db, movie, tmp_path, monkeypatch,
+                                candidate_json("Example.2024.1080p.WEB-DL.H.264", "bad", movie))
+    assert (job["state"], job["reason"], job["torrent_hash"]) == ("WAITING_FOR_RELEASE", "VIDEO_CODEC_MISMATCH", None)
+    assert db.execute("SELECT release_id FROM rejected_releases")[0]["release_id"] == "bad"
+
+
+def unproven(movie, rid="1"):
+    details = ReleaseDetails(evidence=[Evidence(id="card", text="Описание без языка", method="fixture")])
+    c = evaluate(parse_candidate(release("Example.2024.1080p.WEB-DL.H.264", rid), details), movie, Policy())
+    assert c.unknown and not c.reasons
+    return (10, c.model_copy(update={"score": score_of(c, Policy())}), None)
+
+
+def test_judge_follows_the_ai_verdict_and_gives_a_reason(settings, db, movie, monkeypatch):
+    job = db.job(db.submit(movie, False))
+    worker = Worker(settings, db, [], Mock())
+    items = [unproven(movie)]
+    verdict = Verdict(download=False, choice=None, reason_ru="Похоже на другую картину.", reason_en="Looks like another film.")
+    monkeypatch.setattr("mae.worker.DeepSeek.decide", lambda *_a, **_k: verdict)
+    eligible, result = worker.judge(job, movie, items)
+    assert eligible == [] and result["by"] == "deepseek" and not result["download"]
+    assert result["reason_en"] == "Looks like another film."
+    verdict = Verdict(download=True, choice=0, reason_ru="Подходит.", reason_en="Fits.")
+    monkeypatch.setattr("mae.worker.DeepSeek.decide", lambda *_a, **_k: verdict)
+    eligible, result = worker.judge(job, movie, items)
+    assert eligible == items and result["download"] and result["release"].startswith("Example")
+
+
+def test_judge_falls_back_to_the_best_score_without_ai(settings, db, movie, monkeypatch):
+    job = db.job(db.submit(movie, False))
+    monkeypatch.setattr("mae.worker.DeepSeek.decide", lambda *_a, **_k: None)
+    eligible, result = Worker(settings, db, [], Mock()).judge(job, movie, [unproven(movie)])
+    assert len(eligible) == 1 and result["by"] == "rules" and result["download"] and result["reason_ru"]
+
+
+def test_verdict_validation():
+    assert validate_verdict('{"download":true,"choice":1,"reason_ru":"да","reason_en":"yes"}', 2).choice == 1
+    for raw in ('{"download":true,"choice":null,"reason_ru":"да","reason_en":"yes"}',
+                '{"download":false,"choice":0,"reason_ru":"нет","reason_en":"no"}',
+                '{"download":true,"choice":5,"reason_ru":"да","reason_en":"yes"}',
+                '{"download":false,"choice":null,"reason_ru":"","reason_en":"no"}'):
+        with pytest.raises(ValueError):
+            validate_verdict(raw, 2)
 
 
 def test_torznab_reads_infohash_and_searches_by_id_when_declared(respx_mock, movie):
@@ -354,3 +407,14 @@ def test_calendar_lists_monitored_episodes_by_air_date(settings, db):
     data = client_for(settings, db).get("/admin/calendar").json()
     assert [(e["episode"], e["available"], e["aired"]) for e in data["episodes"]] == [
         ("S01E02", True, True), ("S01E03", False, False)]
+
+
+def test_unusable_torrent_is_skipped_not_sent_to_review(settings, db, movie, monkeypatch):
+    job_id = db.submit(movie, False)
+    db.transition(job_id, "SELECTED", candidate=candidate_json("Example.2024.1080p.WEB-DL.H.264", "pack", movie))
+    worker = Worker(settings, db, [], Mock())
+    monkeypatch.setattr(worker, "process", Mock(side_effect=ValueError("TORRENT_EPISODE_MAPPING_UNVERIFIED")))
+    worker.run_job(db.job(job_id))
+    job = db.job(job_id)
+    assert (job["state"], job["reason"], job["candidate"]) == ("RETRY_SCHEDULED", "TORRENT_EPISODE_MAPPING_UNVERIFIED", None)
+    assert db.execute("SELECT release_id FROM rejected_releases")[0]["release_id"] == "pack"

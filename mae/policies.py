@@ -72,13 +72,21 @@ def evaluate(candidate, work, policy):
         c.unknown.append("russian_audio")
     if c.reasons or c.unknown:
         return c
-    c.score = {
+    c.score = score_of(c, policy)
+    return c
+
+
+def score_of(c, policy):
+    p = c.parsed
+    source = p.get("source")
+    resolution = str(p.get("screen_size", ""))
+    score = {
         "source": policy.source_weights.get(source, 0),
         "resolution": 30 if resolution == "2160p" else 10 if resolution == "1080p" else 0,
         "codec": 10 if p.get("video_codec") == "H.265" else 0,
     }
     studios = {cl.value for cl in c.claims if cl.field == "studio"}
-    c.score["studio"] = max([policy.studio_weights.get(s, 0) for s in studios], default=0)
+    score["studio"] = max([policy.studio_weights.get(s, 0) for s in studios], default=0)
     voices = {cl.value for cl in c.claims if cl.field == "voice"}
-    c.score["voice"] = max([policy.voice_weights.get(v, 0) for v in voices], default=0)
-    return c
+    score["voice"] = max([policy.voice_weights.get(v, 0) for v in voices], default=0)
+    return score

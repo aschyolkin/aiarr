@@ -1,4 +1,5 @@
 """Public login shell; all operational data comes from authenticated endpoints."""
+from mae.admin_i18n import rules_json
 
 ADMIN_HTML = '''<!doctype html>
 <html lang="ru"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -47,7 +48,7 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <nav class="top"><span id="header-info" class="muted"><span id="mode"></span><span id="disk"></span><span id="speed"></span></span><span class="spacer"></span>
 <a href="#jobs" data-page="jobs">Заявки</a><a href="#calendar" data-page="calendar">Календарь</a><a href="#sources" data-page="sources">Источники</a>
 <a href="#settings" data-page="settings">⚙ Настройки</a>
-<button id="refresh" type="button">Обновить</button><button id="logout" type="button">Выйти</button></nav>
+<button id="lang" type="button" title="Language">EN</button><button id="refresh" type="button">Обновить</button><button id="logout" type="button">Выйти</button></nav>
 <section id="page-jobs" class="page">
 <div id="jobs" class="cards"></div>
 <section id="inspection" hidden><h2 id="job-title"></h2>
@@ -118,6 +119,9 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 <table class="weights"><thead><tr><th>Студия</th><th>Баллы</th></tr></thead><tbody id="studio-weights"></tbody></table></div>
 <div class="login"><input id="new-studio" placeholder="другая студия"><button id="add-studio" type="button">Добавить студию</button></div>
 <p class="hint">Студия распознаётся в названии раздачи и в строках «Аудио»/«Перевод» описания.</p></fieldset>
+<fieldset><legend>Выбор релиза</legend><div class="grid">
+<label class="field"><span>Качать лучший релиз, даже если часть данных не подтверждена</span><input id="trust_unproven" type="checkbox"></label></div>
+<p class="hint">Если ни один релиз не подтверждён полностью (например, в описании не указана русская дорожка), aiarr берёт лучший по баллам и запускает загрузку сам. Скачанный файл всё равно проверяет ffprobe: кодек, разрешение и русская дорожка. Если файл не подходит, раздача удаляется, берётся следующий релиз, а когда подходящих не остаётся, заявка ждёт новых раздач. Релиз всегда можно сменить вручную кнопкой «Скачать этот».</p></fieldset>
 <fieldset><legend>Улучшение качества</legend><div class="grid">
 <label class="field">Искать релиз лучше для готовых фильмов и сериалов, раз в N часов (0 — не искать)<input id="upgrade_check_hours" type="number" min="0" max="2160"></label>
 <label class="field"><span>Заменять автоматически</span><input id="auto_upgrade" type="checkbox"></label></div>
@@ -171,6 +175,37 @@ nav.top a.active{background:#4338ca;border-color:#6366f1}
 'use strict';
 let token='', signedIn=false, selected=null, busy=false, config=null;
 const byId=id=>document.getElementById(id);
+const RULES=/*EN_RULES*/[].map(([pattern,replacement])=>[new RegExp(pattern,'g'),replacement]);
+const CYRILLIC=/[А-Яа-яЁё]/;
+let lang='ru';
+try{lang=localStorage.getItem('aiarr-lang')||((navigator.language||'').toLowerCase().startsWith('ru')?'ru':'en');}catch{}
+const loc=()=>lang==='en'?'en-GB':'ru-RU';
+function t(text){
+ if(lang!=='en'||typeof text!=='string'||!CYRILLIC.test(text))return text;
+ text=text.replace(/\\s+/g,' ');for(const [re,replacement] of RULES)text=text.replace(re,replacement);return text;
+}
+const SKIP='pre,td.title,.card h3,#job-title';
+const memo=new WeakMap();
+function swap(record,current){const orig=record&&record.out===current?record.orig:current;return {orig,out:t(orig)};}
+function localize(){
+ watcher.disconnect();
+ try{
+  document.documentElement.lang=lang;byId('lang').textContent=lang==='en'?'RU':'EN';
+  const walker=document.createTreeWalker(document.documentElement,NodeFilter.SHOW_TEXT);
+  for(let node;node=walker.nextNode();){
+   const parent=node.parentElement;if(!parent||parent.closest('script,style')||parent.closest(SKIP))continue;
+   const record=swap(memo.get(node),node.data);memo.set(node,record);if(node.data!==record.out)node.data=record.out;
+  }
+  for(const el of document.querySelectorAll('[placeholder],[title]'))for(const attr of ['placeholder','title']){
+   if(!el.hasAttribute(attr)||el.closest(SKIP))continue;
+   const store=memo.get(el)||{};const record=swap(store[attr],el.getAttribute(attr));store[attr]=record;memo.set(el,store);
+   if(el.getAttribute(attr)!==record.out)el.setAttribute(attr,record.out);
+  }
+ }finally{watcher.observe(document.documentElement,{childList:true,subtree:true,characterData:true,
+  attributes:true,attributeFilter:['placeholder','title']});}
+}
+let localizing=0;
+const watcher=new MutationObserver(()=>{if(!localizing)localizing=setTimeout(()=>{localizing=0;localize();},30);});
 const show=(id,value)=>{byId(id).textContent=JSON.stringify(value,null,2);};
 const parse=value=>{try{return JSON.parse(value||'null');}catch{return null;}};
 function clearSession(){
@@ -257,7 +292,7 @@ function renderConfig(){
  byId('min_seeders').value=s.min_seeders;
  byId('min_mbit').value=s.min_download_speed*8/1e6;byId('max_eta_hours').value=s.max_eta_seconds/3600;
  for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days','cleanup_ratio','card_cache_hours'])byId(key).value=s[key];
- for(const key of ['auto_upgrade','speed_schedule_enabled'])byId(key).checked=Boolean(s[key]);
+ for(const key of ['auto_upgrade','trust_unproven','speed_schedule_enabled'])byId(key).checked=Boolean(s[key]);
  byId('speed_dl_mib').value=Math.round(s.speed_limit_download/104857.6)/10;byId('speed_ul_mib').value=Math.round(s.speed_limit_upload/104857.6)/10;
  for(const key of ['qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key']){
   byId(key).value='';byId(key).placeholder=s[key+'_configured']?'Сохранён':'Не задан';
@@ -291,7 +326,7 @@ function collectConfig(){
   speed_limit_download:Math.round(Number(byId('speed_dl_mib').value)*1048576),
   speed_limit_upload:Math.round(Number(byId('speed_ul_mib').value)*1048576)};
  for(const key of ['upgrade_check_hours','speed_limited_from_hour','speed_limited_to_hour','utc_offset_hours','cleanup_after_days','cleanup_ratio','card_cache_hours'])values[key]=Number(byId(key).value);
- for(const key of ['auto_upgrade','speed_schedule_enabled'])values[key]=byId(key).checked;
+ for(const key of ['auto_upgrade','trust_unproven','speed_schedule_enabled'])values[key]=byId(key).checked;
  for(const key of ['qbit_url','qbit_username','jellyfin_url','seerr_url','deepseek_model',
   'qbit_password','jellyfin_key','seerr_key','tmdb_key','deepseek_key'])values[key]=byId(key).value.trim();
  for(const key of ['max_downloads','max_attempts','enrichment_limit','deepseek_daily_calls',
@@ -308,7 +343,7 @@ const tone={AVAILABLE:'ok',DOWNLOADING:'work',VERIFYING:'work',IMPORTING:'work',
  SELECTED:'work',REQUESTED:'work',WAITING_FOR_RELEASE:'warn',RETRY_SCHEDULED:'warn',NEEDS_REVIEW:'bad',
  AUTH_REQUIRED:'bad',FAILED:'bad'};
 const reasons={PARTIAL_SEASON:'Часть серий уже доступна, остальные ещё ищутся',
- NO_PROVEN_CANDIDATE:'Подходящий релиз пока не подтверждён',
+ NO_PROVEN_CANDIDATE:'Подходящий релиз пока не подтверждён',AI_DECLINED:'ИИ решил не скачивать — причина в ходе заказа',
  WAITING_FOR_JELLYFIN:'Файл добавлен, ожидается сканирование Jellyfin',
  ALREADY_IN_LIBRARY:'Уже есть в Jellyfin',DRY_RUN_SELECTED:'Релиз найден, загрузка отключена',
  INSUFFICIENT_SPACE:'Недостаточно места на диске',DOWNLOAD_STALLED_NO_PEERS:'Раздачи не качаются — выбираются следующие релизы',BACKUP_PROMOTED:'Основная раздача стояла — качается запасная',DOWNLOAD_TOO_SLOW:'Раздача слишком медленная — выбирается другая',DOWNLOAD_SLOW_NO_ALTERNATIVE:'Качается медленно, других подходящих раздач нет',DOWNLOAD_QUEUE_LIMIT:'Очередь загрузок заполнена',
@@ -354,8 +389,8 @@ const choosable=c=>!(c.reasons||[]).some(x=>UNCHOOSABLE.has(x))&&!((c.reasons||[
 let currentJob=null;
 async function chooseRelease(c,query=null){
  const r=c.release||{},replacing=currentJob&&(currentJob.state==='AVAILABLE'||currentJob.replacing);
- if(!confirm((replacing?'Заменить файл в библиотеке на релиз':'Скачать релиз')+' «'+r.title+'»?'+
-  (replacing?' Старый файл останется, пока новый не пройдёт проверку.':' Текущая закачка этой заявки будет удалена.')))return;
+ if(!confirm(t((replacing?'Заменить файл в библиотеке на релиз':'Скачать релиз')+' «'+r.title+'»?'+
+  (replacing?' Старый файл останется, пока новый не пройдёт проверку.':' Текущая закачка этой заявки будет удалена.'))))return;
  const body={provider:r.provider,release_id:r.release_id};if(query)body.query=query;
  await api('/admin/jobs/'+selected+'/choose','POST',body);await refresh();
 }
@@ -388,7 +423,7 @@ function renderCalendar(data){
  for(const e of data.episodes){
   const tr=document.createElement('tr');if(e.date===data.today)tr.className='fit';
   const state=e.available?'✔ есть в Jellyfin':e.aired?'⏳ вышла, ищется':'выйдет';
-  const cells=[new Date(e.date+'T12:00:00').toLocaleDateString('ru-RU',{weekday:'short',day:'numeric',month:'short'}),e.title||'',e.episode,state];
+  const cells=[new Date(e.date+'T12:00:00').toLocaleDateString(loc(),{weekday:'short',day:'numeric',month:'short'}),e.title||'',e.episode,state];
   cells.forEach((value,i)=>{const td=document.createElement('td');td.textContent=value;
    if(i===1){td.textContent='';const a=document.createElement('a');a.href='#jobs';a.textContent=value;
     a.onclick=()=>run(()=>inspect(e.job_id));td.append(a);}
@@ -442,7 +477,7 @@ const labelReason=value=>reasons[value]||labelFailure(value)||value||'';
 function appendStep(text,created){
  const li=document.createElement('li');li.textContent=text;
  if(created){const time=document.createElement('time');time.dateTime=new Date(created*1000).toISOString();
-  time.textContent=new Date(created*1000).toLocaleString('ru-RU');li.append(time);}
+  time.textContent=new Date(created*1000).toLocaleString(loc());li.append(time);}
  byId('timeline').append(li);
 }
 function renderProgress(data){
@@ -458,7 +493,7 @@ function renderProgress(data){
   (missing.length?' · ожидаются '+missing.map(x=>x.episode).join(', '):'');
  if(job.reason)summary+=' · '+labelReason(job.reason);
  if(['RETRY_SCHEDULED','WAITING_FOR_RELEASE'].includes(job.state)&&job.next_run*1000>Date.now())
-  summary+=' · следующая попытка '+new Date(job.next_run*1000).toLocaleString('ru-RU',{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
+  summary+=' · следующая попытка '+new Date(job.next_run*1000).toLocaleString(loc(),{day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'});
  if(job.attempts)summary+=' · попыток: '+job.attempts;
  byId('job-summary').textContent=summary;
  const panel=byId('download-panel');panel.hidden=!data.download;
@@ -471,7 +506,7 @@ function renderProgress(data){
  byId('episode-list').replaceChildren();for(const ep of wanted){const li=document.createElement('li');
   const date=air[ep.episode];
   li.textContent=ep.episode+' — '+(ep.available?'есть в Jellyfin':date===''?'дата выхода не объявлена':
-   date&&date>today?'выйдет '+new Date(date+'T12:00:00').toLocaleDateString('ru-RU'):'ожидается');byId('episode-list').append(li);}
+   date&&date>today?'выйдет '+new Date(date+'T12:00:00').toLocaleDateString(loc()):'ожидается');byId('episode-list').append(li);}
  if(upcoming.length)byId('episode-summary').textContent+=' (из них ещё не вышли: '+upcoming.length+')';
  const upgrade=parse(job.upgrade_candidate),panel2=byId('upgrade-panel');
  panel2.hidden=!(upgrade?.candidate||job.replacing);byId('upgrade-apply').hidden=!upgrade?.candidate||Boolean(job.replacing);
@@ -485,6 +520,9 @@ function renderProgress(data){
   const key=event.state+':'+(event.reason||'');if(seen.has(key))continue;seen.add(key);
   appendStep(labelState(event.state)+(event.reason?' · '+labelReason(event.reason):''),event.created);
  }
+ if(decision.verdict){const v=decision.verdict,why=lang==='en'?v.reason_en:v.reason_ru;
+  appendStep((v.by==='deepseek'?'Решение ИИ: ':'Решение: ')+(v.download?'скачать':'не скачивать')+
+   (v.release?' «'+v.release+'»':'')+'. '+why);}
  if(decision.candidates){const candidates=decision.candidates,eligible=candidates.filter(x=>!x.reasons?.length&&!x.unknown?.length);
   appendStep('Проверено '+candidates.length+' вариантов; требованиям соответствуют '+eligible.length+'.');}
  if(chosen?.release){const facts=[...new Set((chosen.claims||[]).map(x=>x.field+': '+x.value))];
@@ -512,7 +550,7 @@ async function inspect(id){
  if(selected!==id){byId('search-results').replaceChildren();byId('search-summary').textContent='';
   byId('search-text').value=parse(data.job.work)?.title||'';}
  selected=id;currentJob=data.job;
- byId('inspection').hidden=false;byId('job-title').textContent=(parse(data.job.work)?.title||'Задание')+' · #'+id;
+ byId('inspection').hidden=false;byId('job-title').textContent=(parse(data.job.work)?.title||t('Задание'))+' · #'+id;
  renderProgress(data);
  renderCandidates(parse(data.job.decision),parse(data.job.candidate));
  show('decision',parse(data.job.decision));show('candidate',parse(data.job.candidate));
@@ -535,7 +573,7 @@ function renderHealth(stats){
   const cells=[s.provider,s.searches,ms(s.search_ms),s.cards,ms(s.card_ms),errors,last,s.fit+' / '+s.chosen];
   cells.forEach((value,i)=>{const td=document.createElement('td');td.textContent=String(value);
    if(i===6)td.className=s.last_search_outcome==='OK'?'stat-ok':'stat-bad';
-   if(i===6&&s.last_error)td.title='Последняя ошибка: '+(OUTCOMES[s.last_error.outcome]||s.last_error.outcome)+', '+new Date(s.last_error.at*1000).toLocaleString('ru-RU');
+   if(i===6&&s.last_error)td.title='Последняя ошибка: '+(OUTCOMES[s.last_error.outcome]||s.last_error.outcome)+', '+new Date(s.last_error.at*1000).toLocaleString(loc());
    tr.append(td);});
   body.append(tr);
  }
@@ -566,7 +604,7 @@ const KNOWN=[
  {name:'LostFilm.tv',studio:true},{name:'AlexFilm',studio:true},
  {name:'Red Head Sound',studio:true},{name:'Flarrow Films',studio:true}];
 const loginChecks={},mirrorChecks={};
-const when=value=>value?new Date(value).toLocaleString('ru-RU'):'';
+const when=value=>value?new Date(value).toLocaleString(loc()):'';
 function renderKnownSources(sources,indexers){
  const body=byId('known-sources');body.replaceChildren();
  for(const k of KNOWN){
@@ -592,8 +630,8 @@ function renderKnownSources(sources,indexers){
    save.onclick=()=>run(async()=>{
     mark.textContent='⏳ проверяем вход на сайте…';
     try{await api('/admin/indexers/'+idx.indexer_id+'/credentials','PUT',{username:user.value.trim(),password:pass.value});
-     loginChecks[idx.indexer_id]={ok:true,at:new Date().toLocaleString('ru-RU')};}
-    catch(error){loginChecks[idx.indexer_id]={ok:false,error:error.message,at:new Date().toLocaleString('ru-RU')};}
+     loginChecks[idx.indexer_id]={ok:true,at:new Date().toLocaleString(loc())};}
+    catch(error){loginChecks[idx.indexer_id]={ok:false,error:error.message,at:new Date().toLocaleString(loc())};}
     pass.value='';await refresh();});
    box.append(user,pass,save,mark);
   }else if(!k.studio&&(provider||idx))box.append('вход не нужен');
@@ -612,7 +650,7 @@ function renderKnownSources(sources,indexers){
    const row=document.createElement('div');row.className='login';row.append('Зеркало:',pick,apply,note);box.append(row);
   }else if(idx?.base_url){const row=document.createElement('div');row.className='muted';row.textContent='Адрес: '+idx.base_url;box.append(row);}
   if(idx&&!provider){const attach=document.createElement('button');attach.type='button';attach.textContent='Подключить к aiarr';
-   attach.onclick=()=>run(async()=>{if(!confirm('Подключить '+k.name+' как источник поиска?'))return;
+   attach.onclick=()=>run(async()=>{if(!confirm(t('Подключить '+k.name+' как источник поиска?')))return;
     await api('/admin/indexers/'+idx.indexer_id+'/attach','POST');config=null;await refresh();
     byId('config-status').textContent=k.name+' подключён. Worker начнёт искать в нём в течение 10 секунд.';});
    box.append(attach);}
@@ -668,7 +706,7 @@ function renderJobs(overview){
    img.style.cssText='width:100%;height:100%;object-fit:cover;border-radius:.4rem';img.onerror=()=>{img.remove();cover.textContent='🎬';};
    cover.append(img);}else cover.textContent='🎬';
   const body=document.createElement('div');body.className='body';card.append(cover,body);
-  const h=document.createElement('h3');h.textContent=(work.title||'Без названия')+(work.year?' ('+work.year+')':'');
+  const h=document.createElement('h3');h.textContent=(work.title||t('Без названия'))+(work.year?' ('+work.year+')':'');
   const badge=document.createElement('span');badge.className='badge '+(tone[job.state]||'');badge.textContent=labelState(job.state);
   body.append(h,badge);
   const lines=[work.kind==='series'?'Сериал':'Фильм'];
@@ -676,7 +714,7 @@ function renderJobs(overview){
   if(job.reason)lines.push(labelReason(job.reason));
   const air=parse(job.air_dates)||{},today=new Date().toISOString().slice(0,10);
   const next=Object.values(air).filter(d=>d&&d>today).sort()[0];
-  if(work.kind==='series'&&next)lines.push('следующая серия '+new Date(next+'T12:00:00').toLocaleDateString('ru-RU',{day:'numeric',month:'short'}));
+  if(work.kind==='series'&&next)lines.push('следующая серия '+new Date(next+'T12:00:00').toLocaleDateString(loc(),{day:'numeric',month:'short'}));
   if(job.replacing)lines.push('🔄 идёт замена на релиз лучше');
   else if(job.upgrade_resolution)lines.push('⬆ есть релиз лучше'+(job.current_resolution&&job.upgrade_resolution>job.current_resolution?': '+job.upgrade_resolution+'p':''));
   const p=document.createElement('p');p.className='muted';p.textContent=lines.join(' · ');body.append(p);
@@ -702,6 +740,9 @@ byId('key-login').onsubmit=event=>{event.preventDefault();run(async()=>{
  token=byId('key').value;byId('key').value='';await enter();});};
 (async()=>{try{await enter();}catch(error){byId('login').hidden=false;byId('status').textContent=error.message;}})();
 byId('refresh').onclick=()=>run(refresh);
+byId('lang').onclick=()=>{lang=lang==='en'?'ru':'en';try{localStorage.setItem('aiarr-lang',lang);}catch{}
+ localize();if(signedIn)run(refresh);};
+localize();
 byId('add-provider').onclick=()=>addProvider();
 byId('search-run').onclick=()=>run(async()=>{const query=byId('search-text').value.trim();
  if(selected===null||query.length<2)return;byId('search-summary').textContent='⏳ ищем по всем источникам…';
@@ -724,11 +765,11 @@ setInterval(()=>{
 byId('add-studio').onclick=()=>{const name=byId('new-studio').value.trim();if(!name)return;
  weightRow(byId('studio-weights'),name,name,0);byId('new-studio').value='';};
 byId('upgrade-apply').onclick=()=>run(async()=>{const u=parse(currentJob?.upgrade_candidate);if(u?.candidate)await chooseRelease(u.candidate);});
-byId('upgrade-abort').onclick=()=>run(async()=>{if(selected===null||!confirm('Отменить замену? Файл в библиотеке останется прежним.'))return;
+byId('upgrade-abort').onclick=()=>run(async()=>{if(selected===null||!confirm(t('Отменить замену? Файл в библиотеке останется прежним.')))return;
  await api('/admin/jobs/'+selected+'/abort-upgrade','POST');await refresh();});
 for(const action of ['retry','cancel'])byId(action).onclick=()=>run(async()=>{
  if(selected===null)return;
- if(!confirm(action==='cancel'?'Отменить это задание? Закачка в qBittorrent будет удалена; уже импортированные файлы останутся.':'Повторить обработку этого задания?'))return;
+ if(!confirm(t(action==='cancel'?'Отменить это задание? Закачка в qBittorrent будет удалена; уже импортированные файлы останутся.':'Повторить обработку этого задания?')))return;
  await api('/admin/jobs/'+selected+'/'+action,'POST');await refresh();
 });
-</script></html>'''
+</script></html>'''.replace('/*EN_RULES*/[]',rules_json())
